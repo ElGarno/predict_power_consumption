@@ -1,0 +1,138 @@
+import requests
+import pandas as pd
+from datetime import datetime, timedelta
+import os
+import json
+
+def get_dwd_weather_data(station_id, start_date, end_date):
+    """
+    Get historical weather data from DWD (Deutscher Wetterdienst) API
+    
+    Parameters:
+    station_id (str): The ID of the weather station
+    start_date (datetime): Start date for data collection
+    end_date (datetime): End date for data collection
+    
+    Returns:
+    pandas.DataFrame: Weather data
+    """
+    # Format dates as required by the API (YYYYMMDD)
+    start_date_str = start_date.strftime("%Y%m%d")
+    end_date_str = end_date.strftime("%Y%m%d")
+    
+    # Base URL for DWD API
+    base_url = "https://dwd.api.bund.dev/v1"
+    
+    # Endpoint for historical hourly data
+    endpoint = f"/stations/{station_id}/measurements/historical/hourly"
+    
+    # Parameters
+    params = {
+        "start_date": start_date_str,
+        "end_date": end_date_str
+    }
+    
+    # Make the request
+    response = requests.get(base_url + endpoint, params=params)
+    
+    if response.status_code == 200:
+        data = response.json()
+        
+        # Convert to DataFrame
+        weather_data = []
+        
+        for record in data.get("data", []):
+            weather_data.append({
+                "timestamp": datetime.strptime(record.get("timestamp"), "%Y-%m-%dT%H:%M:%S%z"),
+                "temperature": record.get("air_temperature"),
+                "cloud_cover": record.get("cloud_cover"),
+                "sunshine_duration": record.get("sunshine_duration"),
+                "solar_radiation": record.get("solar_incoming"),  # Global radiation
+                "precipitation": record.get("precipitation"),
+                "wind_speed": record.get("wind_speed"),
+                "wind_direction": record.get("wind_direction"),
+                "humidity": record.get("humidity"),
+                "pressure": record.get("pressure"),
+            })
+        
+        df = pd.DataFrame(weather_data)
+        return df
+    else:
+        print(f"Error fetching DWD data: {response.status_code}")
+        print(response.text)
+        return pd.DataFrame()
+
+def find_closest_station(lat, lon):
+    """
+    Find the closest DWD weather station to a given latitude and longitude
+    
+    Parameters:
+    lat (float): Latitude
+    lon (float): Longitude
+    
+    Returns:
+    str: Station ID of the closest weather station
+    """
+    # Base URL for DWD API
+    base_url = "https://dwd.api.bund.dev/v1"
+    
+    # Endpoint for stations
+    endpoint = "/stations"
+    
+    # Make the request
+    response = requests.get(base_url + endpoint)
+    
+    if response.status_code == 200:
+        stations = response.json()
+        
+        # Calculate distance to each station
+        min_distance = float('inf')
+        closest_station_id = None
+        
+        for station in stations:
+            station_lat = station.get("lat")
+            station_lon = station.get("lon")
+            
+            if station_lat and station_lon:
+                # Simple Euclidean distance (not perfect but good enough for finding nearby stations)
+                distance = ((lat - station_lat) ** 2 + (lon - station_lon) ** 2) ** 0.5
+                
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_station_id = station.get("id")
+        
+        print(f"Closest station found: {closest_station_id}, distance: {min_distance:.4f} degrees")
+        return closest_station_id
+    else:
+        print(f"Error fetching DWD stations: {response.status_code}")
+        return None
+
+# Example usage:
+# Your location
+lat, lon = 52.520008, 13.404954  # Example coordinates (Berlin) - replace with your actual location
+
+# Date range for data
+start_date = datetime.now() - timedelta(days=30)
+end_date = datetime.now()
+
+# Find closest weather station
+station_id = find_closest_station(lat, lon)
+
+if station_id:
+    # Get weather data
+    weather_data = get_dwd_weather_data(station_id, start_date, end_date)
+    
+    if not weather_data.empty:
+        # Save to CSV
+        csv_filename = f"dwd_weather_data_{datetime.now().strftime('%Y%m%d')}.csv"
+        weather_data.to_csv(csv_filename, index=False)
+        print(f"Data exported to {csv_filename}")
+        
+        # Optionally save to Parquet
+        parquet_filename = f"dwd_weather_data_{datetime.now().strftime('%Y%m%d')}.parquet"
+        weather_data.to_parquet(parquet_filename, index=False)
+        print(f"Data exported to {parquet_filename}")
+    else:
+        print("No weather data found for the specified time range")
+else:
+    print("Could not find a suitable weather station")
