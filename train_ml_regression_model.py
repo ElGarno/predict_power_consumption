@@ -6,6 +6,7 @@ from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
 from sklearn.metrics import root_mean_squared_error
 import matplotlib.pyplot as plt
+import joblib
 
 def read_data(data_path):
     # Read the data from the parquet file
@@ -13,36 +14,46 @@ def read_data(data_path):
     return data
 
 def train_model(data):
-    # Train your model here
-    #Use Random Forest to predict solar power generation
+    import pandas as pd
+
+    # Prepare data
     df = data.copy()
     df["timestamp"] = pd.to_datetime(df.date)
     df = df.set_index("timestamp").sort_index()
-    highly_important_features = ['date', 'radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
-    features = ['radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
+    features = ['radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 
+                'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 
+                'cloud_cover_total', 'humidity']
     X = df[features]
     y = df["solar"]
+
+    # Split off final test set (last 10%)
+    split_idx = int(len(X) * 0.9)
+    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+
+    # Cross-validation on training data
     tscv = TimeSeriesSplit(n_splits=5)
-    model = RandomForestRegressor(n_estimators=40, random_state=42)
-    # predict using Randowm Forest
-    rmse = []
-    for train_idx, val_idx in tscv.split(X):
-        model.fit(X.iloc[train_idx], y.iloc[train_idx])
-        preds = model.predict(X.iloc[val_idx])
-        rmse.append(root_mean_squared_error(y.iloc[val_idx], preds))
-    rmse_mean = np.mean(rmse)
-    print(f"RMSE: {rmse_mean}")
-    # plot prediction vs actual for 23.03.2025 - 25.03.2025
-    df["predicted"] = model.predict(X)
-    df["predicted"] = df["predicted"].clip(lower=0)
-    # df["predicted"] = df["predicted"].clip(upper=10000)
-    # plt.figure(figsize=(12, 6))
-    df[["date", "solar", "predicted"]].set_index("date").loc["2025-03-20":"2025-03-25"].plot(title="Prediction vs Actual")
-    # save the plot
-    plt.savefig("data/prediction_vs_actual.png")
-    plt.show()
+    model_cv = RandomForestRegressor(n_estimators=40, random_state=42)
     
-    return model
+    rmse_scores = []
+    for train_idx, val_idx in tscv.split(X_train):
+        model_cv.fit(X_train.iloc[train_idx], y_train.iloc[train_idx])
+        preds = model_cv.predict(X_train.iloc[val_idx])
+        rmse = root_mean_squared_error(y_train.iloc[val_idx], preds)
+        rmse_scores.append(rmse)
+
+    print(f"Cross-Validation RMSE (on training set): {np.mean(rmse_scores)}")
+
+    # Final model trained on 90% training data
+    final_model = RandomForestRegressor(n_estimators=40, random_state=42)
+    final_model.fit(X_train, y_train)
+
+    # Optional: Evaluate final model on 10% holdout
+    test_preds = final_model.predict(X_test)
+    test_rmse = root_mean_squared_error(y_test, test_preds)
+    print(f"Final Test Set RMSE: {test_rmse}")
+
+    return final_model
 
 def test_models(data):
     # Test your models here
@@ -50,7 +61,7 @@ def test_models(data):
     df["timestamp"] = pd.to_datetime(df.date)
     df = df.set_index("timestamp").sort_index()
     highly_important_features = ['date', 'radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
-    features = ['radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
+    features = ['radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
 
     X = df[features]
     y = df["solar"]
@@ -77,6 +88,23 @@ def test_models(data):
 
     print(pd.Series(results).sort_values().rename("CV_RMSE"))
     
+def test_predict(model, data):
+    # Test your model here
+    df = data.copy()
+    df["timestamp"] = pd.to_datetime(df.date)
+    df = df.set_index("timestamp").sort_index()
+    features = ['radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
+
+    X = df[features]
+    y = df["solar"]
+
+    preds = model.predict(X)
+    rmse = root_mean_squared_error(y, preds)
+    print(f"RMSE: {rmse}")
+    df['predicted'] = preds
+    df["predicted"] = df["predicted"].clip(lower=0)
+    df[["date", "solar", "predicted"]].set_index("date").loc["2025-03-20":"2025-03-29"].plot(title="Prediction vs Actual")
+    plt.savefig("data/prediction_vs_actual.png")
     
 def main():
     # Read the data
@@ -84,6 +112,10 @@ def main():
     # Test the models
     test_models(data)
     model = train_model(data)
+    joblib.dump(model, "data/model.pkl")
+    # test prediction
+    test_predict(model, data)
+    
     
 if __name__ == "__main__":
     main()
