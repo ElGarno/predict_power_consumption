@@ -38,9 +38,9 @@ def merge_data(weather_data, pv_data):
 
 def main():
     # Load weather data
-    weather_data = pd.read_parquet('data/attendorn_hourly_weather_data.parquet')
+    weather_data = pd.read_parquet('data/attendorn_hourly_weather_data_api.parquet')
     # Load PV data
-    pv_data = pd.read_parquet("data/power_consumption_export_20250321.parquet")
+    pv_data = pd.read_parquet("data/power_consumption_export_20250424.parquet")
     
     # Preprocess weather data
     weather_data_relevant = preprocess_weather_data(weather_data)

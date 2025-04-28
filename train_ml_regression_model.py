@@ -31,11 +31,14 @@ def test_models(data):
         "RandomForest": RandomForestRegressor(n_estimators=100, random_state=42),
         "XGBoost": XGBRegressor(n_estimators=100, random_state=42)
     }
+    
+    print(f"X shape: {X.shape}, y shape: {y.shape}")
 
     results = {}
     for name, model in models.items():
         rmses = []
         for train_idx, val_idx in tscv.split(X):
+            # print(f"train_idx: {train_idx}, val_idx: {val_idx}")
             model.fit(X.iloc[train_idx], y.iloc[train_idx])
             preds = model.predict(X.iloc[val_idx])
             rmses.append(root_mean_squared_error(y.iloc[val_idx], preds))
