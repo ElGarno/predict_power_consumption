@@ -8,7 +8,7 @@ def preprocess_weather_data(data):
     df_cleaned = df_cleaned.dropna(how='any')
     # drop any column which contains only the same value
     df_cleaned = df_cleaned.loc[:, df_cleaned.nunique() != 1]
-    highly_important_features = ['timestamp', 'global_solar_Jcm2', 'diffuse_solar_Jcm2', 'sunshine_duration_min', 'zenith_angle_deg', 'temp_c', 'cloud_cover_8ths', 'humidity_pct']
+    highly_important_features = ['date', 'radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
     return df_cleaned[highly_important_features]
 
 def preprocess_pv_data(data, df_relevant):
@@ -17,8 +17,8 @@ def preprocess_pv_data(data, df_relevant):
 
     # Get the rows where timestamp is within the timestamp range of df_relevant
     df_power_consumption_relevant = df_power_consumption[
-        (df_power_consumption['timestamp_naive'] >= df_relevant['timestamp'].min()) & 
-        (df_power_consumption['timestamp_naive'] <= df_relevant['timestamp'].max() + pd.Timedelta(hours=1))
+        (df_power_consumption['timestamp_naive'] >= df_relevant['date'].min()) & 
+        (df_power_consumption['timestamp_naive'] <= df_relevant['date'].max() + pd.Timedelta(hours=1))
     ]
     # resample the power consumption data to hourly data grouped by device_name
     # Method 1: Using pd.Grouper (recommended approach)
@@ -32,7 +32,7 @@ def preprocess_pv_data(data, df_relevant):
 
 def merge_data(weather_data, pv_data):
     # Merge the weather data with the power consumption data
-    df_merged = pd.merge(weather_data, pv_data, how='inner', left_on='timestamp', right_on='timestamp_naive')
+    df_merged = pd.merge(weather_data, pv_data, how='inner', left_on='date', right_on='timestamp_naive')
     return df_merged
 
 
