@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import asyncio
 from dotenv import load_dotenv
 import http.client
 import urllib.parse
@@ -241,53 +242,61 @@ def compute_enegery_overproduction(df, threshold=20000):
     plt.savefig("data/prediction_overproduction.png")
     return overproduction_df[["overproduction_time", "overproduction"]].reset_index(drop=True)
 
+
+async def get_predicted_power(merged_data_file_path, update_data=True, get_power_from_db=False, get_weather_data_from_api=True, update_model=True):
+    while True:
+        if update_data:
+            # Get the merged data for training
+            merged_data = get_merged_data_for_training(get_power_from_db=get_power_from_db, get_weather_data_from_api=get_weather_data_from_api)
+            # export the data to parquet
+            export_to_parquet(merged_data, path)
+        else:
+            merged_data = read_data(merged_data_file_path)
+        # Features
+        features = ['radiation_global', 'radiation_sky_short_wave_diffuse', 
+                    'sunshine_duration', 'temperature_air_mean_2m', 
+                    'cloud_cover_total', 'humidity']
+        # # Test the models
+        # test_models(data, features)
+        if update_model:
+            # Train the model
+            model = train_model(merged_data, features)
+            # Save the model
+            joblib.dump(model, "data/model_weather_solar_power.pkl")
+        else:
+            # Load the model
+            model = joblib.load("data/model_weather_solar_power.pkl")
+        # # test prediction
+        # test_predict(model, data, features)
+        weather_forecast = get_forecast_data()
+        # predict tomorrow
+        forecast_data = predict_tomorrow(model, weather_forecast, features)
+        # The predicted column is the energy production in W for the next day per hour
+        # if predicted value is > 20000 W then we produce more than we consume
+        df_overproduction = compute_enegery_overproduction(forecast_data, threshold=20000)
+        output_string = f"Overproduction for tomorrow: {df_overproduction.to_string(index=False)}"
+        print(output_string)
+        # send pushover notification
+        pushover_user_group = os.getenv("PUSHOVER_USER_GROUP_WOERIS")
+        if (datetime.now().hour == 21) and (datetime.now().minute <= 10):
+            send_pushover_notification_img(pushover_user_group, output_string, "data/prediction_overproduction.png")
+        await asyncio.sleep(600)
     
     
-def main():
+async def main():
     # Read the data
     path = "data"
     merged_data_file = "merged_data_weather_power.parquet"
     merged_data_file_path = os.path.join(path, merged_data_file)
     
-    update_data = False
+    update_data = True
     get_power_from_db = False
     get_weather_data_from_api = True
     
     update_model = True
-    if update_data:
-        # Get the merged data for training
-        merged_data = get_merged_data_for_training(get_power_from_db=get_power_from_db, get_weather_data_from_api=get_weather_data_from_api)
-        # export the data to parquet
-        export_to_parquet(merged_data, path)
-    else:
-        merged_data = read_data(merged_data_file_path)
-    # Features
-    features = ['radiation_global', 'radiation_sky_short_wave_diffuse', 
-                'sunshine_duration', 'temperature_air_mean_2m', 
-                'cloud_cover_total', 'humidity']
-    # # Test the models
-    # test_models(data, features)
-    if update_model:
-        # Train the model
-        model = train_model(merged_data, features)
-        # Save the model
-        joblib.dump(model, "data/model_weather_solar_power.pkl")
-    else:
-        # Load the model
-        model = joblib.load("data/model_weather_solar_power.pkl")
-    # # test prediction
-    # test_predict(model, data, features)
-    weather_forecast = get_forecast_data()
-    # predict tomorrow
-    forecast_data = predict_tomorrow(model, weather_forecast, features)
-    # The predicted column is the energy production in W for the next day per hour
-    # if predicted value is > 20000 W then we produce more than we consume
-    df_overproduction = compute_enegery_overproduction(forecast_data, threshold=20000)
-    output_string = f"Overproduction for tomorrow: {df_overproduction.to_string(index=False)}"
-    print(output_string)
-    # send pushover notification
-    pushover_user_group = os.getenv("PUSHOVER_USER_GROUP_WOERIS")
-    send_pushover_notification_img(pushover_user_group, output_string, "data/prediction_overproduction.png")
+    await get_predicted_power(merged_data_file_path, update_data=update_data, get_power_from_db=get_power_from_db, get_weather_data_from_api=get_weather_data_from_api, update_model=update_model)
+        
     
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
+    
