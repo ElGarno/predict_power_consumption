@@ -1,6 +1,7 @@
 from wetterdienst.provider.dwd.observation import DwdObservationRequest
 from wetterdienst import Settings
 import pandas as pd
+import os
 
 
 
@@ -9,8 +10,8 @@ def get_data_by_api(settings, parameters):
     for parameter in parameters:
         request = DwdObservationRequest(
             parameters=parameter,
-            start_date="2024-12-15",
-            end_date="2025-04-27",
+            start_date="2024-12-15",  # Starting where also the power consumption data starts
+            end_date=pd.Timestamp.today().strftime("%Y-%m-%d"),  # Current date
             settings=settings,
         )
         attendorn = (51.1279, 7.9022)
@@ -49,8 +50,15 @@ def get_pivot_df(df):
     df_climate_cleaned = df_climate_cleaned.loc[:, df_climate_cleaned.nunique() != 1]
     return df_climate_cleaned
             
-    # Main execution
-def main():
+def export_to_parquet(df, path="data"):
+    # Export DataFrame to Parquet
+    parquet_filename = f"attendorn_hourly_weather_data_api.parquet"
+    parquet_filepath = os.path.join(path, parquet_filename)
+    df.to_parquet(parquet_filepath, index=False)
+    print(f"Weather data successfully exported with {len(df)} rows to {parquet_filename}.")
+    
+
+def get_weather_data_pivot():
     # if no settings are provided, default settings are used which are
     # Settings(ts_shape="long", ts_humanize=True, ts_si_units=True)
     settings = Settings(ts_skip_empty=True)
@@ -64,12 +72,12 @@ def main():
     
     df_climate = get_data_by_api(settings, parameters)
     df_climate_pivot = get_pivot_df(df_climate)
-    # # Save the pivoted DataFrame to a CSV file
-    # df_climate_pivot.to_csv("data/attendorn_hourly_weather_data_api.csv", index=False)
-    # Save the pivoted DataFrame to a Parquet file
-    df_climate_pivot.to_parquet("data/attendorn_hourly_weather_data_api.parquet", index=False)
-    print(f"Weather data successfully saved with {len(df_climate_pivot)} rows.")
+    return df_climate_pivot
     
-
+    
+# Main execution
 if __name__ == "__main__":
-    main()
+    df_climate_pivot = get_weather_data_pivot()
+    export_path = "data"
+    export_to_parquet(df_climate_pivot, export_path)
+    

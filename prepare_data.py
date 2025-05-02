@@ -1,4 +1,7 @@
 import pandas as pd
+from get_power_consumption_data import get_power
+from get_weather_data_adorn_hourly_api import get_weather_data_pivot
+import os
 
 
 def preprocess_weather_data(data):
@@ -36,21 +39,39 @@ def merge_data(weather_data, pv_data):
     return df_merged
 
 
-def main():
-    # Load weather data
-    weather_data = pd.read_parquet('data/attendorn_hourly_weather_data_api.parquet')
+def get_merged_data_for_training(get_power_from_db=False, get_weather_data_from_api=True):
+    if get_weather_data_from_api:
+        # Load weather data from API
+        weather_data = get_weather_data_pivot()
+    else:
+        # Load weather data from parquet
+        weather_data = pd.read_parquet('data/attendorn_hourly_weather_data_api.parquet')
     # Load PV data
-    pv_data = pd.read_parquet("data/power_consumption_export_20250424.parquet")
+    if get_power_from_db:
+        # Load the data from the database
+        pv_data = get_power()
+    else:
+        # Load the data from a file
+        pv_data = pd.read_parquet("data/power_consumption_export.parquet")
     
     # Preprocess weather data
     weather_data_relevant = preprocess_weather_data(weather_data)
-    print(weather_data_relevant.info())
     # Preprocess PV data
     pv_data_hourly = preprocess_pv_data(pv_data, weather_data_relevant)
     # Merge the data
     merged_data = merge_data(weather_data_relevant, pv_data_hourly)
-    # save merged data to parquet
-    merged_data.to_parquet("data/merged_data.parquet")
+    return merged_data
+
+def export_to_parquet(df, path="data"):
+    # Export DataFrame to Parquet
+    parquet_filename = f"merged_data_weather_power.parquet"
+    parquet_filepath = os.path.join(path, parquet_filename)
+    df.to_parquet(parquet_filepath, index=False)
+    print(f"Weather data successfully exported with {len(df)} rows to {parquet_filename}.")
     
+    
+
 if __name__ == "__main__":
-    main()
+    df_merged = get_merged_data_for_training(get_power_from_db=False, get_weather_data_from_api=True)
+    # export to parquet
+    export_to_parquet(df_merged)

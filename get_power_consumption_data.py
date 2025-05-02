@@ -71,15 +71,13 @@ def get_power():
     
 def export_to_parquet(df, path="data"):
     # Export DataFrame to Parquet
-    parquet_filename = f"power_consumption_export_{datetime.now().strftime('%Y%m%d')}.parquet"
+    parquet_filename = f"power_consumption_export.parquet"
     parquet_filepath = os.path.join(path, parquet_filename)
-    df.to_parquet(parquet_filename, index=False)    
-    print(f"Data exported to {parquet_filename}")
+    df.to_parquet(parquet_filepath, index=False)    
+    print(f"Data exported to {parquet_filepath}")
 
             
 if __name__ == "__main__":
-    export_path = os.path.join(os.getcwd(), "data")
-    print(f"Exporting power consumption data to {export_path}")
     df = get_power()
     export_to_parquet(df)
     
