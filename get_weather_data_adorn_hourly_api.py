@@ -33,34 +33,6 @@ def get_pivot_df(df):
     # Extract datetime from the date column (assuming it's in column 4 based on earlier cells)
     df_climate_processed = df.copy()
 
-    # Check which column contains the date information
-    if 'date' in df.columns:
-        date_column = 'date'
-    elif 4 in df.columns and pd.api.types.is_datetime64_any_dtype(df[4]):
-        date_column = 4
-        df_climate_processed['date'] = df[date_column]
-
-    # Get parameter column 
-    if 'parameter' in df.columns:
-        param_column = 'parameter'
-    elif 3 in df.columns:
-        param_column = 3
-        df_climate_processed['parameter'] = df[param_column]
-
-    # Get value column
-    if 'value' in df.columns:
-        value_column = 'value'
-    elif 5 in df.columns:
-        value_column = 5
-        df_climate_processed['value'] = df[value_column]
-
-    # Get station_id column if it exists
-    if 'station_id' in df.columns:
-        station_column = 'station_id'
-    elif 0 in df.columns:
-        station_column = 0
-        df_climate_processed['station_id'] = df[station_column]
-
     # Create the pivot table
     df_climate_pivot = df_climate_processed.pivot_table(
         index='date',
@@ -92,8 +64,8 @@ def main():
     
     df_climate = get_data_by_api(settings, parameters)
     df_climate_pivot = get_pivot_df(df_climate)
-    # Save the pivoted DataFrame to a CSV file
-    df_climate_pivot.to_csv("data/attendorn_hourly_weather_data_api.csv", index=False)
+    # # Save the pivoted DataFrame to a CSV file
+    # df_climate_pivot.to_csv("data/attendorn_hourly_weather_data_api.csv", index=False)
     # Save the pivoted DataFrame to a Parquet file
     df_climate_pivot.to_parquet("data/attendorn_hourly_weather_data_api.parquet", index=False)
     print(f"Weather data successfully saved with {len(df_climate_pivot)} rows.")
