@@ -8,22 +8,25 @@ from sklearn.metrics import root_mean_squared_error
 import matplotlib.pyplot as plt
 import joblib
 
+import polars as pl
+from datetime import datetime, timedelta
+from wetterdienst import Settings
+from wetterdienst.provider.dwd.mosmix import DwdForecastDate, DwdMosmixRequest
+import plotly.express as px
+
 def read_data(data_path):
     # Read the data from the parquet file
     data = pd.read_parquet(data_path)
     return data
 
-def train_model(data):
+def train_model(data, features_prediction_only):
     import pandas as pd
 
     # Prepare data
     df = data.copy()
     df["timestamp"] = pd.to_datetime(df.date)
     df = df.set_index("timestamp").sort_index()
-    features = ['radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 
-                'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 
-                'cloud_cover_total', 'humidity']
-    X = df[features]
+    X = df[features_prediction_only]
     y = df["solar"]
 
     # Split off final test set (last 10%)
@@ -55,15 +58,12 @@ def train_model(data):
 
     return final_model
 
-def test_models(data):
+def test_models(data, features_prediction_only):
     # Test your models here
     df = data.copy()
     df["timestamp"] = pd.to_datetime(df.date)
     df = df.set_index("timestamp").sort_index()
-    highly_important_features = ['date', 'radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
-    features = ['radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
-
-    X = df[features]
+    X = df[features_prediction_only]
     y = df["solar"]
 
     tscv = TimeSeriesSplit(n_splits=5)
@@ -88,14 +88,12 @@ def test_models(data):
 
     print(pd.Series(results).sort_values().rename("CV_RMSE"))
     
-def test_predict(model, data):
+def test_predict(model, data, features_prediction_only):
     # Test your model here
     df = data.copy()
     df["timestamp"] = pd.to_datetime(df.date)
     df = df.set_index("timestamp").sort_index()
-    features = ['radiation_global', 'radiation_sky_long_wave', 'radiation_sky_short_wave_diffuse', 'sunshine_duration', 'sun_zenith_angle', 'temperature_air_mean_2m', 'cloud_cover_total', 'humidity']
-
-    X = df[features]
+    X = df[features_prediction_only]
     y = df["solar"]
 
     preds = model.predict(X)
@@ -104,18 +102,223 @@ def test_predict(model, data):
     df['predicted'] = preds
     df["predicted"] = df["predicted"].clip(lower=0)
     df[["date", "solar", "predicted"]].set_index("date").loc["2025-03-20":"2025-03-29"].plot(title="Prediction vs Actual")
-    plt.savefig("data/prediction_vs_actual.png")
+    plt.savefig("data/prediction_vs_actual_lessFeatures.png")
+    
+def get_forecast_data(data, features_prediction_only):
+    # get the data from https://api.open-meteo.com/v1/dwd-icon?latitude=51.12&longitude=7.90&hourly=shortwave_radiation,diffuse_radiation,sunshine_duration,temperature_2m,cloud_cover,relative_humidity_2m&timezone=Europe%2FBerlin
+    import requests
+
+    # Define the API endpoint and parameters
+    url = "https://api.open-meteo.com/v1/dwd-icon"
+    params = {
+        "latitude": 51.14,
+        "longitude": 7.92,
+        "hourly": "shortwave_radiation,diffuse_radiation,sunshine_duration,temperature_2m,cloud_cover,relative_humidity_2m",
+        "timezone": "Europe/Berlin"
+    }
+
+    # Make the API request
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    # Extract the hourly data
+    hourly_data = data["hourly"]
+    # Create the DataFrame
+    df_forecast2 = pd.DataFrame(hourly_data)
+    # Convert the 'time' column to datetime format
+    df_forecast2["time"] = pd.to_datetime(df_forecast2["time"])
+    
+    # feature mapping
+    feature_mapping = {
+        "shortwave_radiation": "radiation_global",
+        "diffuse_radiation": "radiation_sky_short_wave_diffuse",
+        "sunshine_duration": "sunshine_duration",
+        "temperature_2m": "temperature_air_mean_2m",
+        "cloud_cover": "cloud_cover_total",
+        "relative_humidity_2m": "humidity"
+    }
+    # Rename the columns in df_forecast2
+    df_forecast2.rename(columns=feature_mapping, inplace=True)
+    
+    # use only the forecast for the next day
+    df_forecast2 = df_forecast2[df_forecast2["time"].dt.date == tomorrow]
+
+    # Check what columns are actually available in the result
+    print("\nAvailable columns in old:", df_forecast.columns.tolist())
+
+    # Get only the columns that exist in the dataframe
+    available_features = [col for col in features_prediction_only if col in df_forecast.columns]
+
+    # Create plot with only available columns
+    if 'date' in df_forecast.columns and len(available_features) > 0:
+        fig = px.line(df_forecast, x='date', y=available_features, 
+                    title=f"Weather forecast for {tomorrow}")
+        fig.show()
+    else:
+        print("Required columns not found in the dataframe. Available columns:", df_forecast.columns)
+        
+    # same for new forecast
+    # Check what columns are actually available in the result
+    print("\nAvailable columns in new:", df_forecast2.columns.tolist())
+    available_features_new = [col for col in features_prediction_only if col in df_forecast2.columns]
+    if 'time' in df_forecast2.columns and len(available_features_new) > 0:
+        fig = px.line(df_forecast2, x='time', y=available_features_new, 
+                    title=f"Weather forecast for {tomorrow}")
+        fig.show()
+    else:
+        print("Required columns not found in the dataframe. Available columns:", df_forecast2.columns)    
+    
+    # get solar prediction with model
+    df_forecast2["predicted"] = model.predict(df_forecast2[available_features_new])
+    df_forecast2["predicted"] = df_forecast2["predicted"].clip(lower=0)
+    # plot the prediction
+    if 'time' in df_forecast2.columns:
+        fig = px.line(df_forecast2, x='time', y='predicted', 
+                    title=f"Solar prediction for {tomorrow}")
+        fig.show()
+    else:
+        print("Date column not found in the dataframe. Available columns:", df_forecast2.columns)
+
+    
+def predict_tomorrow(model, data, features_prediction_only):
+    def next_day_mosmix(tomorrow: datetime, features: list[str]):
+        # 1. Compute start/end datetimes for midnight→midnight UTC
+        start = datetime(tomorrow.year, tomorrow.month, tomorrow.day)
+        end   = start + timedelta(days=1)
+
+        # 2. Settings: wide table with humanized, non-SI names
+        settings = Settings(ts_shape="wide", ts_humanize=True)
+
+        # 3. Request only the 10-day forecast from the latest run, 
+        #    but *limit* it to tomorrow via start_date/end_date
+        # Use a list of parameters instead of None
+        parameters = []
+        for feature in features:
+            parameters.append(("hourly", "large", feature))
+        
+        request = DwdMosmixRequest(
+            parameters=parameters,           # Specify parameters to fetch
+            issue=DwdForecastDate.LATEST,    # latest model run
+            start_date=start,                # ← here
+            end_date=end,                    # ← and here
+            settings=settings,
+        )
+
+        # 4. Restrict to your stations
+        attendorn = (51.1279, 7.9022)
+        stations = request.filter_by_rank(latlon=attendorn, rank=5)
+
+        # 5. Pull the first (and only) result
+        response = next(stations.values.query())
+        
+        # 6. Convert to pandas DataFrame for easier handling with plotly
+        df = response.df.to_pandas()
+        # plot df and save as png
+        df.plot(title="Tomorrow's forecast")
+        plt.savefig("data/forecast.png")
+        plt.show()
+        
+        return df
+
+    # Tomorrow in UTC
+    tomorrow = datetime.now().date() + timedelta(days=1)
+
+    # Get forecast data
+    df_forecast = next_day_mosmix(tomorrow, features_prediction_only)
+    
+    # other api
+    # get the data from https://api.open-meteo.com/v1/dwd-icon?latitude=51.12&longitude=7.90&hourly=shortwave_radiation,diffuse_radiation,sunshine_duration,temperature_2m,cloud_cover,relative_humidity_2m&timezone=Europe%2FBerlin
+    import requests
+
+    # Define the API endpoint and parameters
+    url = "https://api.open-meteo.com/v1/dwd-icon"
+    params = {
+        "latitude": 51.14,
+        "longitude": 7.92,
+        "hourly": "shortwave_radiation,diffuse_radiation,sunshine_duration,temperature_2m,cloud_cover,relative_humidity_2m",
+        "timezone": "Europe/Berlin"
+    }
+
+    # Make the API request
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    # Extract the hourly data
+    hourly_data = data["hourly"]
+    # Create the DataFrame
+    df_forecast2 = pd.DataFrame(hourly_data)
+    # Convert the 'time' column to datetime format
+    df_forecast2["time"] = pd.to_datetime(df_forecast2["time"])
+    
+    # feature mapping
+    feature_mapping = {
+        "shortwave_radiation": "radiation_global",
+        "diffuse_radiation": "radiation_sky_short_wave_diffuse",
+        "sunshine_duration": "sunshine_duration",
+        "temperature_2m": "temperature_air_mean_2m",
+        "cloud_cover": "cloud_cover_total",
+        "relative_humidity_2m": "humidity"
+    }
+    # Rename the columns in df_forecast2
+    df_forecast2.rename(columns=feature_mapping, inplace=True)
+    
+    # use only the forecast for the next day
+    df_forecast2 = df_forecast2[df_forecast2["time"].dt.date == tomorrow]
+
+    # Check what columns are actually available in the result
+    print("\nAvailable columns in old:", df_forecast.columns.tolist())
+
+    # Get only the columns that exist in the dataframe
+    available_features = [col for col in features_prediction_only if col in df_forecast.columns]
+
+    # Create plot with only available columns
+    if 'date' in df_forecast.columns and len(available_features) > 0:
+        fig = px.line(df_forecast, x='date', y=available_features, 
+                    title=f"Weather forecast for {tomorrow}")
+        fig.show()
+    else:
+        print("Required columns not found in the dataframe. Available columns:", df_forecast.columns)
+        
+    # same for new forecast
+    # Check what columns are actually available in the result
+    print("\nAvailable columns in new:", df_forecast2.columns.tolist())
+    available_features_new = [col for col in features_prediction_only if col in df_forecast2.columns]
+    if 'time' in df_forecast2.columns and len(available_features_new) > 0:
+        fig = px.line(df_forecast2, x='time', y=available_features_new, 
+                    title=f"Weather forecast for {tomorrow}")
+        fig.show()
+    else:
+        print("Required columns not found in the dataframe. Available columns:", df_forecast2.columns)    
+    
+    # get solar prediction with model
+    df_forecast2["predicted"] = model.predict(df_forecast2[available_features_new])
+    df_forecast2["predicted"] = df_forecast2["predicted"].clip(lower=0)
+    # plot the prediction
+    if 'time' in df_forecast2.columns:
+        fig = px.line(df_forecast2, x='time', y='predicted', 
+                    title=f"Solar prediction for {tomorrow}")
+        fig.show()
+    else:
+        print("Date column not found in the dataframe. Available columns:", df_forecast2.columns)
+    
     
 def main():
     # Read the data
     data = read_data("data/merged_data.parquet")
+    # Features
+    features = ['radiation_global', 'radiation_sky_short_wave_diffuse', 
+                'sunshine_duration', 'temperature_air_mean_2m', 
+                'cloud_cover_total', 'humidity']
+    features_prediction_only = ['sunshine_duration', 'temperature_air_mean_2m', 'cloud_cover_total']
     # Test the models
-    test_models(data)
-    model = train_model(data)
-    joblib.dump(model, "data/model.pkl")
+    test_models(data, features)
+    model = train_model(data, features)
+    joblib.dump(model, "data/model_2.pkl")
     # test prediction
-    test_predict(model, data)
-    
+    test_predict(model, data, features)
+    get_forcast_data
+    # predict tomorrow
+    predict_tomorrow(model, data, features)
     
 if __name__ == "__main__":
     main()
