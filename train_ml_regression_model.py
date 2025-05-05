@@ -249,7 +249,7 @@ async def get_predicted_power(merged_data_file_path, update_data=True, get_power
             # Get the merged data for training
             merged_data = get_merged_data_for_training(get_power_from_db=get_power_from_db, get_weather_data_from_api=get_weather_data_from_api)
             # export the data to parquet
-            export_to_parquet(merged_data, path)
+            export_to_parquet(merged_data, path="data")
         else:
             merged_data = read_data(merged_data_file_path)
         # Features
