@@ -19,7 +19,7 @@ dependencies = [
     "plotly (>=6.0.1,<7.0.0)",
     "xgboost (>=3.0.0,<4.0.0)",
     "pandas (>=2.2.3,<3.0.0)",
-    "polars-lts-cpu"
+    "polars-lts-cpu (>=1.29.0,<2.0.0)"
 ]
 
 
