@@ -6,7 +6,7 @@ authors = [
     {name = "Faffi",email = "faffi@gmx.de"}
 ]
 readme = "README.md"
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "pyarrow (>=19.0.1,<20.0.0)",
     "matplotlib (>=3.10.1,<4.0.0)",
@@ -19,10 +19,11 @@ dependencies = [
     "plotly (>=6.0.1,<7.0.0)",
     "xgboost (>=3.0.0,<4.0.0)",
     "pandas (>=2.2.3,<3.0.0)",
-    "polars-lts-cpu (>=1.29.0,<2.0.0)"
+    "polars-lts-cpu (>=1.29.0,<2.0.0)",
+    "pandas-stubs==2.3.2.250926",
 ]
 
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
