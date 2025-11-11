@@ -348,100 +348,167 @@ async def prediction_loop():
     """
     Main prediction loop that runs continuously.
 
-    Fetches data, trains/loads model, generates predictions, and sends notifications.
+    Supports two modes:
+    - Daily: Runs prediction once per day at scheduled time
+    - Interval: Runs prediction every N seconds (legacy mode)
+
+    Also handles weekly model retraining if enabled.
     Respects graceful shutdown signal.
     """
     global shutdown_flag
 
     logger.info("Starting prediction loop")
-    logger.info(f"Configuration: interval={settings.prediction_interval_seconds}s, "
-                f"notification_time={settings.notification_hour}:{settings.notification_minute_window:02d}, "
-                f"update_data={settings.update_data_on_start}, "
-                f"update_model={settings.update_model_on_start}")
+
+    if settings.prediction_mode == "daily":
+        logger.info(f"Mode: Daily prediction at {settings.daily_prediction_hour}:{settings.daily_prediction_minute:02d}")
+        if settings.model_retrain_enabled:
+            days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            logger.info(f"Model retraining: {days[settings.model_retrain_day]} at {settings.model_retrain_hour}:{settings.model_retrain_minute:02d}")
+    else:
+        logger.info(f"Mode: Interval prediction every {settings.prediction_interval_seconds}s")
+
+    logger.info(f"Notification time: {settings.notification_hour}:{settings.notification_minute_window:02d}")
+
+    # Track last execution times to avoid duplicate runs
+    last_prediction_date = None
+    last_retrain_date = None
+
+    # Load model once at startup if it exists
+    model = None
+    if settings.model_path.exists():
+        logger.info(f"Loading existing model from {settings.model_path}")
+        try:
+            model = joblib.load(settings.model_path)
+        except Exception as e:
+            logger.warning(f"Failed to load existing model: {e}. Will train new one.")
+            model = None
 
     while not shutdown_flag:
         try:
-            loop_start = datetime.now()
-            logger.info("=" * 60)
-            logger.info(f"Prediction cycle started at {loop_start}")
-
-            # Load or fetch data
-            if settings.update_data_on_start:
-                logger.info("Fetching fresh training data")
-                merged_data = get_merged_data_for_training(
-                    get_power_from_db=settings.get_power_from_db,
-                    get_weather_data_from_api=settings.get_weather_from_api
-                )
-                # Cache for next iteration
-                export_merged_data(merged_data)
-            else:
-                logger.info(f"Loading cached training data from {settings.merged_data_file}")
-                merged_data = read_parquet(settings.merged_data_file)
-
-            # Train or load model
-            if settings.update_model_on_start:
-                logger.info("Training new model (this may take a while on NAS...)")
-                model = train_model(merged_data, settings.prediction_features)
-                # Save model for next iteration
-                joblib.dump(model, settings.model_path)
-                logger.info(f"Model saved to {settings.model_path}")
-            else:
-                logger.info(f"Loading cached model from {settings.model_path}")
-                model = joblib.load(settings.model_path)
-
-            # Get tomorrow's forecast
-            weather_forecast = get_forecast_data()
-
-            # Generate prediction
-            forecast_data = predict_tomorrow(model, weather_forecast, settings.prediction_features)
-
-            # Compute overproduction
-            df_overproduction = compute_energy_overproduction(
-                forecast_data,
-                settings.overproduction_threshold_watts
-            )
-
-            # Prepare notification message
-            tomorrow = get_tomorrow_date(settings.timezone)
-            if len(df_overproduction) > 0:
-                message = f"Overproduction forecast for {tomorrow}:\n\n{df_overproduction.to_string(index=False)}"
-            else:
-                message = f"No overproduction expected for {tomorrow} (all below {settings.overproduction_threshold_watts}W threshold)"
-
-            logger.info(f"Prediction summary: {message}")
-
-            # Send notification if in configured time window
             now = datetime.now(pytz.timezone(settings.timezone))
-            should_notify = (
-                now.hour == settings.notification_hour and
-                now.minute <= settings.notification_minute_window
+            current_date = now.date()
+            current_day = now.weekday()  # 0=Monday, 6=Sunday
+
+            # Check if it's time for weekly model retraining
+            should_retrain = (
+                settings.model_retrain_enabled and
+                model is not None and  # Only retrain if we have a model
+                current_day == settings.model_retrain_day and
+                now.hour == settings.model_retrain_hour and
+                now.minute == settings.model_retrain_minute and
+                last_retrain_date != current_date
             )
 
-            if should_notify:
-                logger.info("In notification window, sending Pushover notification")
-                plot_path = settings.get_full_path(settings.prediction_plot_file)
-                success = send_pushover_notification(
-                    message=message,
-                    title=f"Solar Forecast {tomorrow}",
-                    image_path=plot_path if plot_path.exists() else None
-                )
-                if success:
-                    logger.info("Notification sent successfully")
-                else:
-                    logger.warning("Notification failed (check logs above)")
-            else:
-                logger.debug(f"Outside notification window (current: {now.hour}:{now.minute:02d})")
+            if should_retrain:
+                logger.info("=" * 60)
+                logger.info(f"Weekly model retraining triggered at {now}")
+                logger.info("=" * 60)
+                try:
+                    # Fetch fresh training data
+                    logger.info("Fetching fresh training data from sources")
+                    merged_data = get_merged_data_for_training(
+                        get_power_from_db=settings.get_power_from_db,
+                        get_weather_data_from_api=settings.get_weather_from_api
+                    )
+                    export_merged_data(merged_data)
 
-            loop_duration = (datetime.now() - loop_start).total_seconds()
-            logger.info(f"Prediction cycle completed in {loop_duration:.1f}s")
+                    # Train new model
+                    logger.info("Training new model (this may take a while on NAS...)")
+                    model = train_model(merged_data, settings.prediction_features)
+                    joblib.dump(model, settings.model_path)
+                    logger.info(f"Model saved to {settings.model_path}")
+
+                    last_retrain_date = current_date
+                    logger.info("Weekly model retraining completed successfully")
+                except Exception as e:
+                    logger.error(f"Model retraining failed: {e}", exc_info=True)
+
+            # Check if it's time for prediction
+            if settings.prediction_mode == "daily":
+                should_predict = (
+                    now.hour == settings.daily_prediction_hour and
+                    now.minute == settings.daily_prediction_minute and
+                    last_prediction_date != current_date
+                )
+            else:
+                # Interval mode: always predict (controlled by sleep interval)
+                should_predict = True
+
+            if should_predict:
+                logger.info("=" * 60)
+                logger.info(f"Prediction triggered at {now}")
+                logger.info("=" * 60)
+
+                # Ensure we have a model
+                if model is None:
+                    logger.warning("No model available, training initial model")
+                    merged_data = get_merged_data_for_training(
+                        get_power_from_db=settings.get_power_from_db,
+                        get_weather_data_from_api=settings.get_weather_from_api
+                    )
+                    model = train_model(merged_data, settings.prediction_features)
+                    joblib.dump(model, settings.model_path)
+                    logger.info(f"Initial model saved to {settings.model_path}")
+
+                # Get tomorrow's forecast
+                weather_forecast = get_forecast_data()
+
+                # Generate prediction
+                forecast_data = predict_tomorrow(model, weather_forecast, settings.prediction_features)
+
+                # Compute overproduction
+                df_overproduction = compute_energy_overproduction(
+                    forecast_data,
+                    settings.overproduction_threshold_watts
+                )
+
+                # Prepare notification message
+                tomorrow = get_tomorrow_date(settings.timezone)
+                if len(df_overproduction) > 0:
+                    message = f"Overproduction forecast for {tomorrow}:\n\n{df_overproduction.to_string(index=False)}"
+                else:
+                    message = f"No overproduction expected for {tomorrow} (all below {settings.overproduction_threshold_watts}W threshold)"
+
+                logger.info(f"Prediction summary: {message}")
+
+                # Send notification if in configured time window and notifications enabled
+                should_notify = (
+                    settings.enable_notifications and
+                    now.hour == settings.notification_hour and
+                    now.minute <= settings.notification_minute_window
+                )
+
+                if should_notify:
+                    logger.info("In notification window, sending Pushover notification")
+                    plot_path = settings.get_full_path(settings.prediction_plot_file)
+                    success = send_pushover_notification(
+                        message=message,
+                        title=f"Solar Forecast {tomorrow}",
+                        image_path=plot_path if plot_path.exists() else None
+                    )
+                    if success:
+                        logger.info("Notification sent successfully")
+                    else:
+                        logger.warning("Notification failed (check logs above)")
+                else:
+                    logger.debug(f"Outside notification window or notifications disabled")
+
+                last_prediction_date = current_date
+                logger.info("Prediction cycle completed successfully")
 
         except Exception as e:
             logger.error(f"Error in prediction loop: {e}", exc_info=True)
 
-        # Sleep until next iteration (or shutdown)
+        # Sleep until next check
         if not shutdown_flag:
-            logger.info(f"Sleeping for {settings.prediction_interval_seconds}s until next cycle")
-            for _ in range(settings.prediction_interval_seconds):
+            if settings.prediction_mode == "daily":
+                # In daily mode, check every 60 seconds
+                sleep_seconds = 60
+            else:
+                # In interval mode, use configured interval
+                sleep_seconds = settings.prediction_interval_seconds
+
+            for _ in range(sleep_seconds):
                 if shutdown_flag:
                     break
                 await asyncio.sleep(1)

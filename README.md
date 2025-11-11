@@ -4,14 +4,14 @@ A production-ready machine learning system that predicts solar power generation 
 
 ## Features
 
-- <$ Fetches weather forecasts from Open-Meteo DWD-ICON API
-- =� Trains ML models on historical weather and power consumption data
-- � Predicts next-day solar power production hourly
-- =� Sends Pushover notifications with overproduction forecasts
-- =3 Docker-ready for NAS deployment
-- � Fully configurable via environment variables
-- =� Comprehensive logging and error handling
-- = Graceful shutdown support
+- Fetches weather forecasts from Open-Meteo DWD-ICON API
+- Trains ML models on historical weather and power consumption data
+- Predicts next-day solar power production hourly
+- Sends Pushover notifications with overproduction forecasts
+- Docker-ready for NAS deployment
+- Fully configurable via environment variables
+- Comprehensive logging and error handling
+- Graceful shutdown support
 
 ## Prerequisites
 
@@ -217,14 +217,36 @@ All settings can be configured via environment variables or `.env` file:
 | `LONGITUDE` | `7.92` | Location longitude for weather |
 | `TIMEZONE` | `Europe/Berlin` | Timezone for all operations |
 
-### Performance Settings (NAS Optimization)
+### Scheduling Settings (Recommended for NAS)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `UPDATE_DATA_ON_START` | `false` | Fetch fresh data each cycle (slow) |
-| `UPDATE_MODEL_ON_START` | `false` | Retrain model each cycle (very slow!) |
-| `PREDICTION_INTERVAL_SECONDS` | `600` | Seconds between prediction cycles |
+| `PREDICTION_MODE` | `daily` | Prediction mode: `daily` (once per day) or `interval` (every N seconds) |
+| `DAILY_PREDICTION_HOUR` | `21` | Hour to run daily prediction (0-23) |
+| `DAILY_PREDICTION_MINUTE` | `0` | Minute to run daily prediction (0-59) |
+| `MODEL_RETRAIN_ENABLED` | `true` | Enable automatic weekly model retraining |
+| `MODEL_RETRAIN_DAY` | `0` | Day of week to retrain (0=Monday, 6=Sunday) |
+| `MODEL_RETRAIN_HOUR` | `3` | Hour to retrain model (0-23), typically early morning |
+| `MODEL_RETRAIN_MINUTE` | `0` | Minute to retrain model (0-59) |
+
+**Why daily mode for NAS deployment?**
+- **Efficient**: Only runs when needed (once per day at notification time)
+- **Light on resources**: No constant polling or predictions every 10 minutes
+- **Fresh data**: Weekly retraining keeps model up-to-date with latest patterns
+- **Battery-friendly**: Perfect for NAS or low-power devices
+
+**Example schedule:**
+- **Daily at 21:00**: Fetch tomorrow's forecast → Predict → Send notification
+- **Monday at 03:00**: Fetch fresh historical data → Retrain model
+
+### Performance Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PREDICTION_INTERVAL_SECONDS` | `600` | Seconds between predictions (interval mode only) |
 | `MODEL_N_ESTIMATORS` | `40` | RandomForest trees (more = slower) |
+| `GET_POWER_FROM_DB` | `true` | Fetch power data from InfluxDB during retraining |
+| `GET_WEATHER_FROM_API` | `true` | Fetch weather data from API during retraining |
 
 ### Notification Settings
 
@@ -488,7 +510,7 @@ Tested on Synology DS920+ NAS:
 ## FAQ
 
 **Q: How often should I retrain the model?**
-A: Weekly is sufficient. Set `UPDATE_MODEL_ON_START=false` and retrain manually once per week.
+A: With the new scheduling system, the model retrains **automatically every week** (default: Monday at 03:00). You can configure this with `MODEL_RETRAIN_DAY` and `MODEL_RETRAIN_HOUR`.
 
 **Q: Can I use this for multiple locations?**
 A: Currently supports one location. For multiple locations, run separate instances with different config.
@@ -521,4 +543,4 @@ For issues or questions, check:
 
 ---
 
-**Happy solar forecasting!  �**
+**Happy solar forecasting!**

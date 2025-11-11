@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  solar-prediction:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solar-power-prediction
+    restart: unless-stopped
+
+    # Environment variables from .env file
+    env_file:
+      - .env
+
+    # Override specific settings for container
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DATA_DIR=/usr/src/app/data
+
+      # Scheduling mode (daily is recommended for NAS)
+      - PREDICTION_MODE=${PREDICTION_MODE:-daily}
+      - DAILY_PREDICTION_HOUR=${DAILY_PREDICTION_HOUR:-21}
+      - DAILY_PREDICTION_MINUTE=${DAILY_PREDICTION_MINUTE:-0}
+
+      # Weekly model retraining (enabled by default)
+      - MODEL_RETRAIN_ENABLED=${MODEL_RETRAIN_ENABLED:-true}
+      - MODEL_RETRAIN_DAY=${MODEL_RETRAIN_DAY:-0}
+      - MODEL_RETRAIN_HOUR=${MODEL_RETRAIN_HOUR:-3}
+      - MODEL_RETRAIN_MINUTE=${MODEL_RETRAIN_MINUTE:-0}
+
+    # Persist data between container restarts
+    volumes:
+      - ./data:/usr/src/app/data
+      - ./logs:/usr/src/app/logs
+
+    # Health check (inherited from Dockerfile)
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys; sys.exit(0 if Path('data/model_weather_solar_power.pkl').exists() else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # Resource limits (adjust for your NAS)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Graceful shutdown
+    stop_grace_period: 30s
+
+    # Network mode (use host for InfluxDB on same machine)
+    network_mode: bridge
+
+# Optional: InfluxDB service for local development
+# Uncomment if you want to run InfluxDB locally for testing
+#  influxdb:
+#    image: influxdb:2.7-alpine
+#    container_name: influxdb-local
+#    restart: unless-stopped
+#    ports:
+#      - "8086:8086"
+#    volumes:
+#      - influxdb-data:/var/lib/influxdb2
+#      - influxdb-config:/etc/influxdb2
+#    environment:
+#      - DOCKER_INFLUXDB_INIT_MODE=setup
+#      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+#      - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword
+#      - DOCKER_INFLUXDB_INIT_ORG=None
+#      - DOCKER_INFLUXDB_INIT_BUCKET=power_consumption
+#      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=your-super-secret-auth-token
+
+#volumes:
+#  influxdb-data:
+#  influxdb-config:
