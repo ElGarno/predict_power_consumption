@@ -51,10 +51,28 @@ docker-compose up -d --build
 - **Key settings**:
   - `INFLUXDB_URL`, `INFLUXDB_TOKEN`: Database connection
   - `LATITUDE`, `LONGITUDE`: Location for weather data
-  - `OVERPRODUCTION_THRESHOLD_WATTS`: Power threshold (default: 20000W)
+  - `OVERPRODUCTION_THRESHOLD_WATTS`: Power threshold (default: 200W)
   - `PREDICTION_INTERVAL_SECONDS`: How often to run predictions (default: 600s)
   - `UPDATE_MODEL_ON_START`: Retrain model each cycle (default: false, expensive!)
   - `LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+### Monitoring Setup (Critical Understanding)
+
+**This system monitors individual devices via smart plugs (e.g., Tapo), NOT whole-house consumption.**
+
+#### Data Characteristics
+- **Data source**: Smart plugs reporting instantaneous power (watts) every ~30 seconds
+- **Measured**: Individual devices (fridge, office, appliances, etc.) plugged into smart plugs
+- **NOT measured**: Heating systems, main lighting, other circuits not on smart plugs
+- **Hourly aggregation**: Uses `.mean()` to calculate average power per hour
+  - ❌ **NOT `.sum()`**: That would incorrectly multiply values by number of samples (~110x inflation)
+  - ✅ **`.mean()`**: Correct for instantaneous power measurements
+
+#### Typical Values
+- **Monitored devices average**: 150-200W (8 smart plugs)
+- **Total household**: Much higher (includes unmeasured heating, lights, etc.)
+- **Small solar system**: 600-800W peak, 1-5 kWh daily
+- **Overproduction threshold**: Set between monitored average and solar peak (typically 200-400W)
 
 ## Architecture
 
@@ -172,7 +190,7 @@ docker-compose up -d --build
 - **Timing**: Configurable notification hour and minute window (default: 21:00-21:10)
 - **Message**: Includes overproduction hours with timestamps and wattage
 - **Image**: Attaches prediction plot visualization
-- **Threshold**: Configurable (default: 20,000W)
+- **Threshold**: Configurable (default: 200W, suitable for balcony solar comparing to monitored devices)
 
 ### Graceful Shutdown
 - Handles SIGTERM and SIGINT signals
