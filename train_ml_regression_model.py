@@ -1,166 +1,198 @@
+"""
+ML model training and prediction module for solar power forecasting.
+
+This module handles:
+- Training RandomForest models on historical weather/power data
+- Fetching weather forecasts from Open-Meteo API
+- Predicting solar power production for next day
+- Computing overproduction periods above consumption threshold
+- Sending daily notifications with predictions
+- Running continuously with graceful shutdown support
+
+For NAS deployment, this runs as a long-lived process with configurable intervals.
+"""
+
 import pandas as pd
 import numpy as np
 import asyncio
-from dotenv import load_dotenv
-import http.client
-import urllib.parse
+import signal
 import requests
-from prepare_data import get_merged_data_for_training, export_to_parquet
 from sklearn.model_selection import TimeSeriesSplit
-# from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.ensemble import RandomForestRegressor
-# from xgboost import XGBRegressor
 from sklearn.metrics import root_mean_squared_error
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for NAS
 import matplotlib.pyplot as plt
 import joblib
-import os
-
-import polars as pl
 from datetime import datetime, timedelta
-import plotly.express as px
+from typing import Optional
+from pathlib import Path
+import pytz
 
-def send_pushover_notification_new(user, message):
-    load_dotenv()
-    conn = http.client.HTTPSConnection("api.pushover.net:443")
-    pushover_api_token = os.getenv("PUSHOVER_TAPO_API_TOKEN")
-    conn.request("POST", "/1/messages.json",
-                 urllib.parse.urlencode({
-                     "token": pushover_api_token,
-                     "user": user,
-                     "message": message,
-                 }), {"Content-type": "application/x-www-form-urlencoded"})
-    conn.getresponse()
-    
-def send_pushover_notification_img(user, message, image_path="data/prediction_overproduction.png"):
-    load_dotenv()
-    pushover_api_token = os.getenv("PUSHOVER_TAPO_API_TOKEN")
-    
-    data = {
-        "token": pushover_api_token,
-        "user": user,
-        "message": message,
-    }
+from prepare_data import get_merged_data_for_training, export_merged_data
+from config import settings, logger
+from utils import (
+    send_pushover_notification,
+    read_parquet,
+    validate_dataframe_not_empty,
+    validate_required_columns,
+    get_tomorrow_date,
+    retry_with_backoff
+)
 
-    files = {"attachment": open(image_path, "rb")} if image_path else None
+# Global flag for graceful shutdown
+shutdown_flag = False
 
-    response = requests.post("https://api.pushover.net/1/messages.json", data=data, files=files)
-    response.raise_for_status() 
 
-def read_data(data_path):
-    # Read the data from the parquet file
-    data = pd.read_parquet(data_path)
-    return data
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    global shutdown_flag
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    shutdown_flag = True
 
-def train_model(data, features_prediction_only):
-    import pandas as pd
+
+def train_model(
+    data: pd.DataFrame,
+    features: Optional[list[str]] = None
+) -> RandomForestRegressor:
+    """
+    Train a RandomForest regression model for solar power prediction.
+
+    Uses time-series cross-validation for robust evaluation and trains
+    final model on configured train/test split.
+
+    Args:
+        data: Training data with features and 'solar' target column
+        features: List of feature columns (default: from settings)
+
+    Returns:
+        RandomForestRegressor: Trained model
+
+    Raises:
+        ValueError: If data is missing required columns or is empty
+    """
+    features = features or settings.prediction_features
+
+    logger.info(f"Training model with {len(data)} samples")
+
+    # Validate data
+    validate_dataframe_not_empty(data, "Training data")
+    required_cols = features + ['date', 'solar']
+    validate_required_columns(data, required_cols, "Training data")
 
     # Prepare data
     df = data.copy()
     df["timestamp"] = pd.to_datetime(df.date)
     df = df.set_index("timestamp").sort_index()
-    X = df[features_prediction_only]
+    X = df[features]
     y = df["solar"]
 
-    # Split off final test set (last 10%)
-    split_idx = int(len(X) * 0.9)
+    logger.info(f"Training features: {features}")
+    logger.info(f"Data shape: X={X.shape}, y={y.shape}")
+
+    # Split off final test set
+    split_ratio = settings.model_train_test_split
+    split_idx = int(len(X) * split_ratio)
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
+    logger.info(f"Train/test split: {split_ratio:.0%} = {len(X_train)}/{len(X_test)} samples")
+
     # Cross-validation on training data
-    tscv = TimeSeriesSplit(n_splits=5)
-    model_cv = RandomForestRegressor(n_estimators=40, random_state=42)
-    
+    tscv = TimeSeriesSplit(n_splits=settings.model_cv_splits)
+    model_cv = RandomForestRegressor(
+        n_estimators=settings.model_n_estimators,
+        random_state=settings.model_random_state,
+        n_jobs=-1  # Use all CPU cores
+    )
+
     rmse_scores = []
-    for train_idx, val_idx in tscv.split(X_train):
+    logger.info(f"Running {settings.model_cv_splits}-fold time-series cross-validation")
+
+    for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train), 1):
         model_cv.fit(X_train.iloc[train_idx], y_train.iloc[train_idx])
         preds = model_cv.predict(X_train.iloc[val_idx])
         rmse = root_mean_squared_error(y_train.iloc[val_idx], preds)
         rmse_scores.append(rmse)
+        logger.debug(f"Fold {fold}/{settings.model_cv_splits}: RMSE = {rmse:.2f}")
 
-    print(f"Cross-Validation RMSE (on training set): {np.mean(rmse_scores)}")
+    mean_cv_rmse = np.mean(rmse_scores)
+    logger.info(f"Cross-Validation RMSE: {mean_cv_rmse:.2f} (±{np.std(rmse_scores):.2f})")
 
-    # Final model trained on 90% training data
-    final_model = RandomForestRegressor(n_estimators=40, random_state=42)
+    # Train final model on full training set
+    logger.info("Training final model on full training set")
+    final_model = RandomForestRegressor(
+        n_estimators=settings.model_n_estimators,
+        random_state=settings.model_random_state,
+        n_jobs=-1
+    )
     final_model.fit(X_train, y_train)
 
-    # Optional: Evaluate final model on 10% holdout
+    # Evaluate on test set
     test_preds = final_model.predict(X_test)
     test_rmse = root_mean_squared_error(y_test, test_preds)
-    print(f"Final Test Set RMSE: {test_rmse}")
+    logger.info(f"Final Test Set RMSE: {test_rmse:.2f}")
+
+    # Log feature importances
+    feature_importance = sorted(
+        zip(features, final_model.feature_importances_),
+        key=lambda x: x[1],
+        reverse=True
+    )
+    logger.info("Feature importances: " + ", ".join([f"{name}={imp:.3f}" for name, imp in feature_importance]))
 
     return final_model
 
-# def test_models(data, features_prediction_only):
-#     # Test your models here
-#     df = data.copy()
-#     df["timestamp"] = pd.to_datetime(df.date)
-#     df = df.set_index("timestamp").sort_index()
-#     X = df[features_prediction_only]
-#     y = df["solar"]
 
-#     tscv = TimeSeriesSplit(n_splits=5)
-#     models = {
-#         "Linear": LinearRegression(),
-#         "Ridge": Ridge(alpha=1),
-#         "RandomForest": RandomForestRegressor(n_estimators=40, random_state=42),
-#         "XGBoost": XGBRegressor(n_estimators=100, random_state=42)
-#     }
-    
-#     print(f"X shape: {X.shape}, y shape: {y.shape}")
+def get_forecast_data() -> pd.DataFrame:
+    """
+    Fetch weather forecast from Open-Meteo DWD-ICON API.
 
-#     results = {}
-#     for name, model in models.items():
-#         rmses = []
-#         for train_idx, val_idx in tscv.split(X):
-#             # print(f"train_idx: {train_idx}, val_idx: {val_idx}")
-#             model.fit(X.iloc[train_idx], y.iloc[train_idx])
-#             preds = model.predict(X.iloc[val_idx])
-#             rmses.append(root_mean_squared_error(y.iloc[val_idx], preds))
-#         results[name] = np.mean(rmses)
+    Retrieves hourly forecast for tomorrow for the configured location,
+    maps API fields to model feature names.
 
-#     print(pd.Series(results).sort_values().rename("CV_RMSE"))
-    
-# def test_predict(model, data, features_prediction_only):
-#     # Test your model here
-#     df = data.copy()
-#     df["timestamp"] = pd.to_datetime(df.date)
-#     df = df.set_index("timestamp").sort_index()
-#     X = df[features_prediction_only]
-#     y = df["solar"]
+    Returns:
+        pd.DataFrame: Tomorrow's hourly weather forecast
 
-#     preds = model.predict(X)
-#     rmse = root_mean_squared_error(y, preds)
-#     print(f"RMSE: {rmse}")
-#     df['predicted'] = preds
-#     df["predicted"] = df["predicted"].clip(lower=0)
-#     df[["date", "solar", "predicted"]].set_index("date").loc["2025-03-20":"2025-03-29"].plot(title="Prediction vs Actual")
-#     plt.savefig("data/prediction_vs_actual_lessFeatures.png")
-    
-def get_forecast_data():
-    # get the data from https://api.open-meteo.com/v1/dwd-icon?latitude=51.12&longitude=7.90&hourly=shortwave_radiation,diffuse_radiation,sunshine_duration,temperature_2m,cloud_cover,relative_humidity_2m&timezone=Europe%2FBerlin
-    import requests
+    Raises:
+        ConnectionError: If API request fails
+        ValueError: If response is invalid or missing data
+    """
+    logger.info(f"Fetching weather forecast for location ({settings.latitude}, {settings.longitude})")
 
-    # Define the API endpoint and parameters
-    url = "https://api.open-meteo.com/v1/dwd-icon"
     params = {
-        "latitude": 51.14,
-        "longitude": 7.92,
+        "latitude": settings.latitude,
+        "longitude": settings.longitude,
         "hourly": "shortwave_radiation,diffuse_radiation,sunshine_duration,temperature_2m,cloud_cover,relative_humidity_2m",
-        "timezone": "Europe/Berlin"
+        "timezone": settings.timezone
     }
 
-    # Make the API request
-    response = requests.get(url, params=params)
-    data = response.json()
+    try:
+        response = requests.get(
+            settings.weather_api_url,
+            params=params,
+            timeout=settings.http_timeout_seconds
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.Timeout:
+        raise ConnectionError(f"Weather API request timed out after {settings.http_timeout_seconds}s")
+    except requests.exceptions.RequestException as e:
+        raise ConnectionError(f"Weather API request failed: {e}")
+    except ValueError as e:
+        raise ValueError(f"Failed to parse weather API response as JSON: {e}")
 
-    # Extract the hourly data
+    # Extract and validate hourly data
+    if "hourly" not in data:
+        raise ValueError("Weather API response missing 'hourly' data")
+
     hourly_data = data["hourly"]
-    # Create the DataFrame
     df_forecast = pd.DataFrame(hourly_data)
-    # Convert the 'time' column to datetime format
+
+    # Convert time column to datetime
     df_forecast["time"] = pd.to_datetime(df_forecast["time"])
-    
-    # feature mapping
+
+    # Map API field names to model feature names
     feature_mapping = {
         "shortwave_radiation": "radiation_global",
         "diffuse_radiation": "radiation_sky_short_wave_diffuse",
@@ -169,134 +201,279 @@ def get_forecast_data():
         "cloud_cover": "cloud_cover_total",
         "relative_humidity_2m": "humidity"
     }
-    # Rename the columns in df_forecast2
     df_forecast.rename(columns=feature_mapping, inplace=True)
-    # Tomorrow in UTC
-    tomorrow = datetime.now().date() + timedelta(days=1)
-    # use only the forecast for the next day
+
+    # Filter to tomorrow only
+    tomorrow = get_tomorrow_date(settings.timezone)
     df_forecast = df_forecast[df_forecast["time"].dt.date == tomorrow]
-        
+
+    validate_dataframe_not_empty(df_forecast, "Tomorrow's forecast")
+    logger.info(f"Retrieved forecast for {tomorrow}: {len(df_forecast)} hourly data points")
+
     return df_forecast
 
-    
-def predict_tomorrow(model, weather_forecast, features_prediction_only, plot_images=False):
 
-    # Check what columns are actually available in the result
-    print("\nAvailable columns:", weather_forecast.columns.tolist())
-    available_features = [col for col in features_prediction_only if col in weather_forecast.columns]
-    # Tomorrow in UTC
-    tomorrow = datetime.now().date() + timedelta(days=1)
-    if plot_images:
-        if 'time' in weather_forecast.columns and len(available_features) > 0:
-            fig = px.line(weather_forecast, x='time', y=available_features, 
-                        title=f"Weather forecast for {tomorrow}")
-            fig.show()
-        else:
-            print("Required columns not found in the dataframe. Available columns:", weather_forecast.columns)    
-    
-    # get solar prediction with model
-    weather_forecast["predicted"] = model.predict(weather_forecast[available_features])
-    weather_forecast["predicted"] = weather_forecast["predicted"].clip(lower=0)
-    # plot the prediction
-    if plot_images:
-        if 'time' in weather_forecast.columns:
-            fig = px.line(weather_forecast, x='time', y='predicted', 
-                        title=f"Solar prediction for {tomorrow}")
-            fig.show()
-        else:
-            print("Date column not found in the dataframe. Available columns:", weather_forecast.columns)
-    return weather_forecast
+def predict_tomorrow(
+    model: RandomForestRegressor,
+    weather_forecast: pd.DataFrame,
+    features: Optional[list[str]] = None
+) -> pd.DataFrame:
+    """
+    Predict solar power production for tomorrow using weather forecast.
+
+    Args:
+        model: Trained RandomForest model
+        weather_forecast: Tomorrow's weather forecast
+        features: Feature names (default: from settings)
+
+    Returns:
+        pd.DataFrame: Forecast with 'predicted' power column added
+
+    Raises:
+        ValueError: If required features are missing
+    """
+    features = features or settings.prediction_features
+
+    # Check which features are available
+    available_features = [f for f in features if f in weather_forecast.columns]
+    missing_features = set(features) - set(available_features)
+
+    if missing_features:
+        logger.warning(f"Missing features in forecast: {missing_features}")
+
+    if not available_features:
+        raise ValueError("No prediction features available in weather forecast")
+
+    logger.debug(f"Predicting with features: {available_features}")
+
+    # Generate predictions
+    forecast = weather_forecast.copy()
+    forecast["predicted"] = model.predict(forecast[available_features])
+
+    # Clip negative predictions to zero (can't have negative power)
+    forecast["predicted"] = forecast["predicted"].clip(lower=0)
+
+    tomorrow = get_tomorrow_date(settings.timezone)
+    total_predicted = forecast["predicted"].sum()
+    logger.info(f"Solar prediction for {tomorrow}: {total_predicted/1000:.1f} kWh total, "
+                f"peak {forecast['predicted'].max():.0f}W")
+
+    return forecast
 
 
-def compute_enegery_overproduction(df, threshold=20000):
-    overproduction_df = df.copy()
-    # Compute the energy overproduction
-    overproduction_df["overproduction"] = overproduction_df["predicted"] - threshold
-    # what are suitable times to consume energy?
-    overproduction_df["overproduction"] = overproduction_df["overproduction"].clip(lower=0)
-    # get the time of the overproduction
-    overproduction_df["overproduction_time"] = overproduction_df["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    overproduction_df = overproduction_df[overproduction_df["overproduction"] > 0]
-    
-    # Tomorrow in UTC
-    tomorrow = datetime.now().date() + timedelta(days=1)
-    # create a matplotlib plot where the x-axis is the time and the y-axis is the predicted value and the threshold is 20000.
-    # if the predicted value is greater than 20000, then the value is red, otherwise it is green so plot all in one plot
-    fig, ax = plt.subplots()
-    # Extract hour from datetime for x-axis
+def compute_energy_overproduction(
+    forecast_df: pd.DataFrame,
+    threshold: Optional[int] = None
+) -> pd.DataFrame:
+    """
+    Compute periods when solar production exceeds consumption threshold.
+
+    Also generates and saves a visualization plot.
+
+    Args:
+        forecast_df: Forecast with 'time' and 'predicted' columns
+        threshold: Power threshold in watts (default: from settings)
+
+    Returns:
+        pd.DataFrame: Rows where overproduction occurs with columns:
+            - overproduction_time: Timestamp string
+            - overproduction: Watts above threshold
+
+    Raises:
+        ValueError: If required columns are missing
+    """
+    threshold = threshold or settings.overproduction_threshold_watts
+
+    validate_required_columns(forecast_df, ['time', 'predicted'], "Forecast data")
+
+    logger.info(f"Computing overproduction with threshold {threshold}W")
+
+    df = forecast_df.copy()
+
+    # Calculate overproduction
+    df["overproduction"] = (df["predicted"] - threshold).clip(lower=0)
+    df["overproduction_time"] = df["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Filter to only overproduction periods
+    overproduction_df = df[df["overproduction"] > 0]
+
+    total_overproduction = overproduction_df["overproduction"].sum()
+    num_hours = len(overproduction_df)
+
+    logger.info(f"Overproduction found: {num_hours} hours, {total_overproduction/1000:.1f} kWh total")
+
+    # Create visualization
+    tomorrow = get_tomorrow_date(settings.timezone)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
     hours = df["time"].dt.hour
-    
-    ax.plot(hours, df["predicted"], label="Predicted", color="blue")
-    ax.axhline(y=threshold, color='r', linestyle='--', label="Threshold")
-    ax.fill_between(hours, threshold, df["predicted"], 
-                    where=(df["predicted"] > threshold), color='green', alpha=0.5)
-    ax.fill_between(hours, threshold, df["predicted"], 
-                    where=(df["predicted"] <= threshold), color='red', alpha=0.5)
-    ax.set_title(f"Solar prediction for {tomorrow}")
-    ax.set_xlabel("Hour of day")
-    ax.set_ylabel("Predicted Power (W)")
-    ax.grid(True, linestyle='--', alpha=0.7)  # Add grid lines
-    plt.legend()
-    # plt.show()
-    # Save the plot
-    plt.savefig("data/prediction_overproduction.png")
+
+    # Plot prediction line
+    ax.plot(hours, df["predicted"], label="Predicted Power", color="blue", linewidth=2)
+
+    # Plot threshold line
+    ax.axhline(y=threshold, color='r', linestyle='--', label=f"Threshold ({threshold}W)", linewidth=2)
+
+    # Fill areas
+    ax.fill_between(
+        hours, threshold, df["predicted"],
+        where=(df["predicted"] > threshold),
+        color='green', alpha=0.3, label="Overproduction"
+    )
+    ax.fill_between(
+        hours, 0, df["predicted"],
+        where=(df["predicted"] <= threshold),
+        color='orange', alpha=0.2, label="Normal Production"
+    )
+
+    ax.set_title(f"Solar Power Prediction for {tomorrow}", fontsize=14, fontweight='bold')
+    ax.set_xlabel("Hour of Day", fontsize=12)
+    ax.set_ylabel("Predicted Power (W)", fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.5)
+    ax.legend(loc='best')
+    ax.set_xlim(0, 23)
+
+    # Save plot
+    plot_path = settings.get_full_path(settings.prediction_plot_file)
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    logger.info(f"Saved prediction plot to {plot_path}")
+
     return overproduction_df[["overproduction_time", "overproduction"]].reset_index(drop=True)
 
 
-async def get_predicted_power(merged_data_file_path, update_data=True, get_power_from_db=False, get_weather_data_from_api=True, update_model=True):
-    while True:
-        if update_data:
-            # Get the merged data for training
-            merged_data = get_merged_data_for_training(get_power_from_db=get_power_from_db, get_weather_data_from_api=get_weather_data_from_api)
-            # export the data to parquet
-            export_to_parquet(merged_data, path="data")
-        else:
-            merged_data = read_data(merged_data_file_path)
-        # Features
-        features = ['radiation_global', 'radiation_sky_short_wave_diffuse', 
-                    'sunshine_duration', 'temperature_air_mean_2m', 
-                    'cloud_cover_total', 'humidity']
-        # # Test the models
-        # test_models(data, features)
-        if update_model:
-            # Train the model
-            model = train_model(merged_data, features)
-            # Save the model
-            joblib.dump(model, "data/model_weather_solar_power.pkl")
-        else:
-            # Load the model
-            model = joblib.load("data/model_weather_solar_power.pkl")
-        # # test prediction
-        # test_predict(model, data, features)
-        weather_forecast = get_forecast_data()
-        # predict tomorrow
-        forecast_data = predict_tomorrow(model, weather_forecast, features)
-        # The predicted column is the energy production in W for the next day per hour
-        # if predicted value is > 20000 W then we produce more than we consume
-        df_overproduction = compute_enegery_overproduction(forecast_data, threshold=20000)
-        output_string = f"Overproduction for tomorrow: {df_overproduction.to_string(index=False)}"
-        print(output_string)
-        # send pushover notification
-        pushover_user_group = os.getenv("PUSHOVER_USER_GROUP_WOERIS")
-        if (datetime.now().hour == 21) and (datetime.now().minute <= 10):
-            send_pushover_notification_img(pushover_user_group, output_string, "data/prediction_overproduction.png")
-        await asyncio.sleep(600)
-    
-    
+async def prediction_loop():
+    """
+    Main prediction loop that runs continuously.
+
+    Fetches data, trains/loads model, generates predictions, and sends notifications.
+    Respects graceful shutdown signal.
+    """
+    global shutdown_flag
+
+    logger.info("Starting prediction loop")
+    logger.info(f"Configuration: interval={settings.prediction_interval_seconds}s, "
+                f"notification_time={settings.notification_hour}:{settings.notification_minute_window:02d}, "
+                f"update_data={settings.update_data_on_start}, "
+                f"update_model={settings.update_model_on_start}")
+
+    while not shutdown_flag:
+        try:
+            loop_start = datetime.now()
+            logger.info("=" * 60)
+            logger.info(f"Prediction cycle started at {loop_start}")
+
+            # Load or fetch data
+            if settings.update_data_on_start:
+                logger.info("Fetching fresh training data")
+                merged_data = get_merged_data_for_training(
+                    get_power_from_db=settings.get_power_from_db,
+                    get_weather_data_from_api=settings.get_weather_from_api
+                )
+                # Cache for next iteration
+                export_merged_data(merged_data)
+            else:
+                logger.info(f"Loading cached training data from {settings.merged_data_file}")
+                merged_data = read_parquet(settings.merged_data_file)
+
+            # Train or load model
+            if settings.update_model_on_start:
+                logger.info("Training new model (this may take a while on NAS...)")
+                model = train_model(merged_data, settings.prediction_features)
+                # Save model for next iteration
+                joblib.dump(model, settings.model_path)
+                logger.info(f"Model saved to {settings.model_path}")
+            else:
+                logger.info(f"Loading cached model from {settings.model_path}")
+                model = joblib.load(settings.model_path)
+
+            # Get tomorrow's forecast
+            weather_forecast = get_forecast_data()
+
+            # Generate prediction
+            forecast_data = predict_tomorrow(model, weather_forecast, settings.prediction_features)
+
+            # Compute overproduction
+            df_overproduction = compute_energy_overproduction(
+                forecast_data,
+                settings.overproduction_threshold_watts
+            )
+
+            # Prepare notification message
+            tomorrow = get_tomorrow_date(settings.timezone)
+            if len(df_overproduction) > 0:
+                message = f"Overproduction forecast for {tomorrow}:\n\n{df_overproduction.to_string(index=False)}"
+            else:
+                message = f"No overproduction expected for {tomorrow} (all below {settings.overproduction_threshold_watts}W threshold)"
+
+            logger.info(f"Prediction summary: {message}")
+
+            # Send notification if in configured time window
+            now = datetime.now(pytz.timezone(settings.timezone))
+            should_notify = (
+                now.hour == settings.notification_hour and
+                now.minute <= settings.notification_minute_window
+            )
+
+            if should_notify:
+                logger.info("In notification window, sending Pushover notification")
+                plot_path = settings.get_full_path(settings.prediction_plot_file)
+                success = send_pushover_notification(
+                    message=message,
+                    title=f"Solar Forecast {tomorrow}",
+                    image_path=plot_path if plot_path.exists() else None
+                )
+                if success:
+                    logger.info("Notification sent successfully")
+                else:
+                    logger.warning("Notification failed (check logs above)")
+            else:
+                logger.debug(f"Outside notification window (current: {now.hour}:{now.minute:02d})")
+
+            loop_duration = (datetime.now() - loop_start).total_seconds()
+            logger.info(f"Prediction cycle completed in {loop_duration:.1f}s")
+
+        except Exception as e:
+            logger.error(f"Error in prediction loop: {e}", exc_info=True)
+
+        # Sleep until next iteration (or shutdown)
+        if not shutdown_flag:
+            logger.info(f"Sleeping for {settings.prediction_interval_seconds}s until next cycle")
+            for _ in range(settings.prediction_interval_seconds):
+                if shutdown_flag:
+                    break
+                await asyncio.sleep(1)
+
+    logger.info("Prediction loop terminated gracefully")
+
+
 async def main():
-    # Read the data
-    path = "data"
-    merged_data_file = "merged_data_weather_power.parquet"
-    merged_data_file_path = os.path.join(path, merged_data_file)
-    
-    update_data = True
-    get_power_from_db = False
-    get_weather_data_from_api = True
-    
-    update_model = True
-    await get_predicted_power(merged_data_file_path, update_data=update_data, get_power_from_db=get_power_from_db, get_weather_data_from_api=get_weather_data_from_api, update_model=update_model)
-        
-    
+    """Main entry point for the application."""
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    logger.info("=" * 60)
+    logger.info("Solar Power Prediction Service Starting")
+    logger.info(f"Location: ({settings.latitude}, {settings.longitude})")
+    logger.info(f"Timezone: {settings.timezone}")
+    logger.info(f"Data directory: {settings.data_dir}")
+    logger.info(f"Model: RandomForest(n_estimators={settings.model_n_estimators})")
+    logger.info(f"Overproduction threshold: {settings.overproduction_threshold_watts}W")
+    logger.info("=" * 60)
+
+    try:
+        await prediction_loop()
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt")
+    except Exception as e:
+        logger.error(f"Fatal error in main: {e}", exc_info=True)
+        raise
+    finally:
+        logger.info("Solar Power Prediction Service Stopped")
+
+
 if __name__ == "__main__":
     asyncio.run(main())
-    
