@@ -5,12 +5,12 @@ A production-ready machine learning system that predicts solar power generation 
 ## Features
 
 - <$ Fetches weather forecasts from Open-Meteo DWD-ICON API
-- =Ê Trains ML models on historical weather and power consumption data
-- ¡ Predicts next-day solar power production hourly
-- =ñ Sends Pushover notifications with overproduction forecasts
+- =ï¿½ Trains ML models on historical weather and power consumption data
+- ï¿½ Predicts next-day solar power production hourly
+- =ï¿½ Sends Pushover notifications with overproduction forecasts
 - =3 Docker-ready for NAS deployment
-- ™ Fully configurable via environment variables
-- =Ý Comprehensive logging and error handling
+- ï¿½ Fully configurable via environment variables
+- =ï¿½ Comprehensive logging and error handling
 - = Graceful shutdown support
 
 ## Prerequisites
@@ -19,6 +19,25 @@ A production-ready machine learning system that predicts solar power generation 
 - InfluxDB instance with power consumption data
 - Pushover account for notifications (optional)
 - uv or poetry for dependency management
+
+## Understanding Your Monitoring Setup
+
+This system works with **smart plugs (e.g., Tapo)** that measure instantaneous power consumption. Important notes:
+
+- **What's measured**: Individual devices plugged into smart plugs (e.g., fridge, office equipment, appliances)
+- **What's NOT measured**: Heating, main lighting, and other circuits not on smart plugs
+- **Data format**: Smart plugs report instantaneous power (watts) every ~30 seconds
+- **Hourly aggregation**: The system uses `.mean()` to calculate average power per hour (not `.sum()`)
+
+**Example setup:**
+- 8 smart plugs monitoring: fridge, office, kitchen appliances, TV, washing machines
+- Average monitored consumption: ~170-200W
+- Total household (including unmeasured): much higher
+
+**Solar panel:**
+- Small solar system (e.g., balcony solar or 1-2 panels)
+- Peak capacity: typically 600-800W
+- Daily production: 1-5 kWh depending on season
 
 ## Quick Start - Local Testing
 
@@ -214,7 +233,27 @@ All settings can be configured via environment variables or `.env` file:
 | `ENABLE_NOTIFICATIONS` | `true` | Enable Pushover notifications |
 | `NOTIFICATION_HOUR` | `21` | Hour to send daily notification (0-23) |
 | `NOTIFICATION_MINUTE_WINDOW` | `10` | Minute window to send (0-59) |
-| `OVERPRODUCTION_THRESHOLD_WATTS` | `20000` | Threshold for overproduction alert |
+| `OVERPRODUCTION_THRESHOLD_WATTS` | `200` | Threshold for overproduction alert (see guide below) |
+
+#### Setting the Right Overproduction Threshold
+
+The threshold determines when you'll be notified about excess solar production. **This is compared against your monitored devices only** (smart plugs), not total household consumption.
+
+**For typical balcony solar (600-800W peak):**
+- `200W` - Notify when solar exceeds typical monitored consumption (recommended)
+- `300W` - Notify during good solar production periods
+- `400W` - Notify only during strong solar production
+
+**For larger solar systems (1-3kW peak):**
+- `500W` - Notify when solar significantly exceeds baseline consumption
+- `1000W` - Notify during strong overproduction
+- `1500W` - Notify during peak solar hours with significant excess
+
+**To find your ideal threshold:**
+1. Check your solar panel's peak capacity (nameplate watts)
+2. Check average power of your monitored devices (see training data stats)
+3. Set threshold between average consumption and solar peak
+4. Adjust based on notification frequency preferences
 
 ### Logging Settings
 
@@ -482,4 +521,4 @@ For issues or questions, check:
 
 ---
 
-**Happy solar forecasting!  ¡**
+**Happy solar forecasting!  ï¿½**
