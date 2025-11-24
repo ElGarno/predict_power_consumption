@@ -42,8 +42,14 @@ from utils import (
     send_awtrix_forecast_summary
 )
 
+# Debug: Log that imports completed successfully
+logger.info("All imports completed successfully")
+
 # Global flag for graceful shutdown
 shutdown_flag = False
+
+# Debug: Log module initialization complete
+logger.info("Module initialization complete, ready to start")
 
 
 def signal_handler(signum, frame):
