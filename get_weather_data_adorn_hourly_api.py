@@ -5,8 +5,8 @@ Uses the Wetterdienst library to query DWD observation stations and retrieve
 hourly weather measurements for power prediction features.
 """
 
-from wetterdienst.provider.dwd.observation import DwdObservationRequest
-from wetterdienst import Settings as WetterdientSettings
+# Lazy imports: wetterdienst is imported only when functions are called
+# This avoids loading heavy dependencies during module import
 import pandas as pd
 from typing import Optional, Tuple
 from datetime import datetime
@@ -16,7 +16,7 @@ from utils import export_to_parquet, validate_dataframe_not_empty, get_timezone_
 
 
 def get_data_by_api(
-    wetter_settings: WetterdientSettings,
+    wetter_settings: "WetterdientSettings",  # Quoted for forward reference
     parameters: list[Tuple[str, str]],
     location: Tuple[float, float],
     start_date: Optional[str] = None,
@@ -41,6 +41,9 @@ def get_data_by_api(
         ValueError: If no data is returned from API
         ConnectionError: If API request fails
     """
+    # Lazy import: only load wetterdienst when actually fetching data
+    from wetterdienst.provider.dwd.observation import DwdObservationRequest
+
     start_date = start_date or settings.historical_data_start_date
     end_date = end_date or pd.Timestamp.today().strftime("%Y-%m-%d")
 
@@ -169,6 +172,9 @@ def get_weather_data_pivot(
         ValueError: If no data available
         ConnectionError: If API request fails
     """
+    # Lazy import: only load wetterdienst when actually fetching data
+    from wetterdienst import Settings as WetterdientSettings
+
     location = location or (settings.latitude, settings.longitude)
 
     # Configure Wetterdienst to skip empty data
