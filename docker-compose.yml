@@ -6,10 +6,7 @@ services:
     container_name: solar-power-prediction
     restart: unless-stopped
 
-    # Environment variables from .env file
-    env_file:
-      - .env
-
+    # Environment variables (loaded via Portainer or .env file if present)
     # Override specific settings for container
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
