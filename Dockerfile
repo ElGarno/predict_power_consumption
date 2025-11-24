@@ -27,8 +27,9 @@ RUN mkdir -p /usr/src/app/data && \
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /usr/src/app
 
-# Copy application code
+# Copy application code and make entrypoint executable
 COPY --chown=appuser:appuser . .
+RUN chmod +x entrypoint.sh
 
 # Switch to non-root user
 USER appuser
@@ -38,4 +39,4 @@ ENV PYTHONUNBUFFERED=1 \
     LOG_LEVEL=INFO
 
 # Run the prediction service
-CMD ["python", "./train_ml_regression_model.py"]
+CMD ["./entrypoint.sh"]

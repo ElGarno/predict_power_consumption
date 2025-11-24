@@ -47,6 +47,14 @@ services:
     # Graceful shutdown
     stop_grace_period: 30s
 
+    # Health check - verify model file exists (means app started successfully)
+    healthcheck:
+      test: ["CMD-SHELL", "test -f data/model_weather_solar_power.pkl || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
     # Network mode (use host for InfluxDB on same machine)
     network_mode: bridge
 
