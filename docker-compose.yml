@@ -3,10 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: solar-power-prediction:latest
+      platforms:
+        - linux/amd64
     container_name: solar-power-prediction
     restart: unless-stopped
-    platform: linux/amd64
 
     # Environment variables (loaded via Portainer or .env file if present)
     # Override specific settings for container
@@ -25,10 +25,10 @@ services:
       - MODEL_RETRAIN_HOUR=${MODEL_RETRAIN_HOUR:-3}
       - MODEL_RETRAIN_MINUTE=${MODEL_RETRAIN_MINUTE:-0}
 
-    # Persist data between container restarts
+    # Persist data between container restarts (using named volumes)
     volumes:
-      - ./data:/usr/src/app/data
-      - ./logs:/usr/src/app/logs
+      - solar-data:/usr/src/app/data
+      - solar-logs:/usr/src/app/logs
 
     # Logging configuration
     logging:
@@ -42,6 +42,11 @@ services:
 
     # Network mode (use host for InfluxDB on same machine)
     network_mode: bridge
+
+# Named volumes for persistent data
+volumes:
+  solar-data:
+  solar-logs:
 
 # Optional: InfluxDB service for local development
 # Uncomment if you want to run InfluxDB locally for testing
@@ -62,6 +67,5 @@ services:
 #      - DOCKER_INFLUXDB_INIT_BUCKET=power_consumption
 #      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=your-super-secret-auth-token
 
-#volumes:
 #  influxdb-data:
 #  influxdb-config:
