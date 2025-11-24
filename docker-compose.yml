@@ -13,6 +13,7 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DATA_DIR=/usr/src/app/data
+      - POLARS_SKIP_CPU_CHECK=1
 
       # Scheduling mode (daily is recommended for NAS)
       - PREDICTION_MODE=${PREDICTION_MODE:-daily}
@@ -24,6 +25,12 @@ services:
       - MODEL_RETRAIN_DAY=${MODEL_RETRAIN_DAY:-0}
       - MODEL_RETRAIN_HOUR=${MODEL_RETRAIN_HOUR:-3}
       - MODEL_RETRAIN_MINUTE=${MODEL_RETRAIN_MINUTE:-0}
+
+      # Credentials from Portainer (loaded externally)
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - INFLUXDB_URL=${INFLUXDB_URL:-http://localhost:8086}
+      - PUSHOVER_TAPO_API_TOKEN=${PUSHOVER_TAPO_API_TOKEN}
+      - PUSHOVER_USER_GROUP_WOERIS=${PUSHOVER_USER_GROUP_WOERIS}
 
     # Persist data between container restarts (using named volumes)
     volumes:
