@@ -13,22 +13,11 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files
-COPY pyproject.toml ./
+COPY requirements.txt ./
 
-# Install dependencies using pip (more reliable for Docker builds)
+# Install dependencies using pip
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-    pandas==2.2.3 \
-    pyarrow==18.0.0 \
-    scikit-learn==1.5.2 \
-    matplotlib==3.9.2 \
-    requests==2.32.3 \
-    python-dotenv==1.0.1 \
-    pydantic-settings==2.6.1 \
-    influxdb-client==1.47.0 \
-    wetterdienst==0.101.0 \
-    pytz==2024.2 \
-    joblib==1.4.2
+    pip install --no-cache-dir -r requirements.txt
 
 # Create data directory with proper permissions
 RUN mkdir -p /usr/src/app/data && \

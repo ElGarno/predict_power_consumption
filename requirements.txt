@@ -1,0 +1,16 @@
+pyarrow>=19.0.1,<20.0.0
+matplotlib>=3.10.1,<4.0.0
+seaborn>=0.13.2,<0.14.0
+nbformat>=5.10.4,<6.0.0
+scikit-learn>=1.6.1,<2.0.0
+wetterdienst>=0.107.0,<0.108.0
+influxdb-client>=1.48.0,<2.0.0
+requests>=2.32.3,<3.0.0
+plotly>=6.0.1,<7.0.0
+xgboost>=3.0.0,<4.0.0
+pandas>=2.2.3,<3.0.0
+polars-lts-cpu>=1.29.0,<2.0.0
+pandas-stubs==2.3.2.250926
+pydantic-settings>=2.12.0
+pytz>=2025.2
+joblib>=1.4.2
