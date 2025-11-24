@@ -1,11 +1,9 @@
 import requests
-import logging
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 import json
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from config import logger
 
 
 @dataclass
@@ -76,16 +74,16 @@ class AwtrixClient:
             if message.repeat is not None:
                 payload["repeat"] = message.repeat
                 
-            logger.info(f"Sending notification to Awtrix: {payload}")
-            
+            logger.info(f"→ AWTRIX: Sending notification to {self.host} - Text: '{message.text}', Icon: {message.icon or 'None'}")
+
             response = requests.post(
                 url,
                 json=payload,
                 timeout=self.timeout
             )
-            
+
             if response.status_code == 200:
-                logger.info("Notification sent successfully")
+                logger.info(f"✓ AWTRIX: Notification delivered successfully to {self.host}")
                 return True
             else:
                 logger.error(f"Failed to send notification. Status: {response.status_code}, Response: {response.text}")
@@ -112,16 +110,17 @@ class AwtrixClient:
         try:
             url = f"{self.base_url}/custom/{app_name}"
             
-            logger.info(f"Sending app data to Awtrix: {app_name} - {data}")
-            
+            logger.info(f"→ AWTRIX: Sending app data to {self.host} - App: '{app_name}'")
+            logger.debug(f"   AWTRIX app data payload: {data}")
+
             response = requests.post(
                 url,
                 json=data,
                 timeout=self.timeout
             )
-            
+
             if response.status_code == 200:
-                logger.info(f"App data sent successfully to {app_name}")
+                logger.info(f"✓ AWTRIX: App data delivered successfully to '{app_name}' on {self.host}")
                 return True
             else:
                 logger.error(f"Failed to send app data. Status: {response.status_code}, Response: {response.text}")
