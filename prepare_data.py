@@ -5,15 +5,44 @@ This module combines historical weather data with power consumption measurements
 performs feature selection, and creates the final training dataset.
 """
 
+import sys
+print("DEBUG prepare_data: Starting imports...", file=sys.stderr, flush=True)
+
 import pandas as pd
+print("DEBUG prepare_data: pandas imported", file=sys.stderr, flush=True)
+
 import pytz
+print("DEBUG prepare_data: pytz imported", file=sys.stderr, flush=True)
+
 from typing import Optional
 from datetime import timedelta
+print("DEBUG prepare_data: stdlib imports done", file=sys.stderr, flush=True)
 
+print("DEBUG prepare_data: About to import get_power_consumption_data", file=sys.stderr, flush=True)
 from get_power_consumption_data import get_power
+print("DEBUG prepare_data: get_power_consumption_data imported", file=sys.stderr, flush=True)
+
+print("DEBUG prepare_data: About to import get_weather_data_adorn_hourly_api", file=sys.stderr, flush=True)
 from get_weather_data_adorn_hourly_api import get_weather_data_pivot
+print("DEBUG prepare_data: get_weather_data_adorn_hourly_api imported", file=sys.stderr, flush=True)
+
+print("DEBUG prepare_data: About to import config", file=sys.stderr, flush=True)
 from config import settings, logger
-from utils import export_to_parquet, validate_dataframe_not_empty, validate_required_columns
+print("DEBUG prepare_data: config imported", file=sys.stderr, flush=True)
+
+print("DEBUG prepare_data: About to import utils.export_to_parquet", file=sys.stderr, flush=True)
+from utils import export_to_parquet
+print("DEBUG prepare_data: export_to_parquet imported", file=sys.stderr, flush=True)
+
+print("DEBUG prepare_data: About to import utils.validate_dataframe_not_empty", file=sys.stderr, flush=True)
+from utils import validate_dataframe_not_empty
+print("DEBUG prepare_data: validate_dataframe_not_empty imported", file=sys.stderr, flush=True)
+
+print("DEBUG prepare_data: About to import utils.validate_required_columns", file=sys.stderr, flush=True)
+from utils import validate_required_columns
+print("DEBUG prepare_data: validate_required_columns imported", file=sys.stderr, flush=True)
+
+print("DEBUG prepare_data: All imports completed!", file=sys.stderr, flush=True)
 
 
 def preprocess_weather_data(data: pd.DataFrame) -> pd.DataFrame:
