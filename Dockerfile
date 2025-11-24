@@ -14,8 +14,10 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency management
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    ln -s /root/.cargo/bin/uv /usr/local/bin/uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Add uv to PATH
+ENV PATH="/root/.cargo/bin:$PATH"
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
@@ -41,10 +43,6 @@ USER appuser
 ENV PYTHONUNBUFFERED=1 \
     PATH="/usr/src/app/.venv/bin:$PATH" \
     LOG_LEVEL=INFO
-
-# Health check
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "from pathlib import Path; import sys; sys.exit(0 if Path('data/model_weather_solar_power.pkl').exists() else 1)"
 
 # Run the prediction service
 CMD ["python", "./train_ml_regression_model.py"]
