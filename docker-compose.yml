@@ -3,8 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: solar-power-prediction:latest
     container_name: solar-power-prediction
     restart: unless-stopped
+    platform: linux/amd64
 
     # Environment variables (loaded via Portainer or .env file if present)
     # Override specific settings for container
