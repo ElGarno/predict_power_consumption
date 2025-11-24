@@ -18,25 +18,29 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False,
+        case_sensitive=True,  # Required for uppercase env vars to work
         extra="ignore"
     )
 
     # InfluxDB Configuration
     influxdb_url: str = Field(
         default="http://localhost:8086",
+        alias="INFLUXDB_URL",
         description="InfluxDB server URL"
     )
     influxdb_token: str = Field(
         default="",
+        alias="INFLUXDB_TOKEN",
         description="InfluxDB authentication token"
     )
     influxdb_org: str = Field(
         default="None",
+        alias="INFLUXDB_ORG",
         description="InfluxDB organization name"
     )
     influxdb_bucket: str = Field(
         default="power_consumption",
+        alias="INFLUXDB_BUCKET",
         description="InfluxDB bucket name"
     )
     influxdb_query_chunk_days: int = Field(
