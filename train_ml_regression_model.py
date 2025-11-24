@@ -37,7 +37,9 @@ from utils import (
     validate_dataframe_not_empty,
     validate_required_columns,
     get_tomorrow_date,
-    retry_with_backoff
+    retry_with_backoff,
+    send_awtrix_countdown,
+    send_awtrix_forecast_summary
 )
 
 # Global flag for graceful shutdown
@@ -378,16 +380,51 @@ async def prediction_loop():
     if settings.model_path.exists():
         logger.info(f"Loading existing model from {settings.model_path}")
         try:
+            load_start = datetime.now()
             model = joblib.load(settings.model_path)
+            load_duration = (datetime.now() - load_start).total_seconds()
+            logger.info(f"Model loaded successfully in {load_duration:.1f}s")
         except Exception as e:
             logger.warning(f"Failed to load existing model: {e}. Will train new one.")
             model = None
+
+    # Log initial status
+    if settings.prediction_mode == "daily":
+        now = datetime.now(pytz.timezone(settings.timezone))
+        next_prediction = f"{settings.daily_prediction_hour:02d}:{settings.daily_prediction_minute:02d}"
+        logger.info(f"Service ready. Waiting for next prediction at {next_prediction} (currently {now.strftime('%H:%M')})")
 
     while not shutdown_flag:
         try:
             now = datetime.now(pytz.timezone(settings.timezone))
             current_date = now.date()
             current_day = now.weekday()  # 0=Monday, 6=Sunday
+
+            # Log status in daily mode (once per hour to show it's alive)
+            if settings.prediction_mode == "daily" and now.minute == 0:
+                next_prediction = f"{settings.daily_prediction_hour:02d}:{settings.daily_prediction_minute:02d}"
+                logger.info(f"Service running. Next prediction at {next_prediction} (currently {now.strftime('%H:%M')})")
+
+            # Send AWTRIX countdown every 5 minutes in daily mode
+            if settings.prediction_mode == "daily":
+                # Calculate time until next prediction
+                target_time = now.replace(
+                    hour=settings.daily_prediction_hour,
+                    minute=settings.daily_prediction_minute,
+                    second=0,
+                    microsecond=0
+                )
+
+                # If target time is in the past, move to tomorrow
+                if target_time <= now:
+                    target_time += timedelta(days=1)
+
+                time_diff = target_time - now
+                hours_until = int(time_diff.total_seconds() // 3600)
+                minutes_until = int((time_diff.total_seconds() % 3600) // 60)
+
+                # Send countdown to AWTRIX
+                send_awtrix_countdown(hours_until, minutes_until)
 
             # Check if it's time for weekly model retraining
             should_retrain = (
@@ -415,8 +452,12 @@ async def prediction_loop():
                     # Train new model
                     logger.info("Training new model (this may take a while on NAS...)")
                     model = train_model(merged_data, settings.prediction_features)
-                    joblib.dump(model, settings.model_path)
-                    logger.info(f"Model saved to {settings.model_path}")
+
+                    # Save with compression to reduce file size and I/O time
+                    save_start = datetime.now()
+                    joblib.dump(model, settings.model_path, compress=3)
+                    save_duration = (datetime.now() - save_start).total_seconds()
+                    logger.info(f"Model saved to {settings.model_path} in {save_duration:.1f}s")
 
                     last_retrain_date = current_date
                     logger.info("Weekly model retraining completed successfully")
@@ -462,6 +503,38 @@ async def prediction_loop():
                     settings.overproduction_threshold_watts
                 )
 
+                # Calculate total energy and overproduction windows for AWTRIX
+                total_energy_kwh = forecast_data["predicted"].sum() / 1000
+
+                # Extract overproduction time windows (consecutive hours)
+                overproduction_windows = []
+                if len(df_overproduction) > 0:
+                    # Parse hours from overproduction times
+                    df_overproduction_copy = df_overproduction.copy()
+                    df_overproduction_copy["hour"] = pd.to_datetime(df_overproduction_copy["overproduction_time"]).dt.hour
+
+                    # Group consecutive hours into time windows
+                    current_start = None
+                    current_end = None
+
+                    for hour in sorted(df_overproduction_copy["hour"].unique()):
+                        if current_start is None:
+                            current_start = hour
+                            current_end = hour
+                        elif hour == current_end + 1:
+                            current_end = hour
+                        else:
+                            overproduction_windows.append((current_start, current_end + 1))
+                            current_start = hour
+                            current_end = hour
+
+                    # Add final window
+                    if current_start is not None:
+                        overproduction_windows.append((current_start, current_end + 1))
+
+                # Send AWTRIX forecast summary
+                send_awtrix_forecast_summary(total_energy_kwh, overproduction_windows)
+
                 # Prepare notification message
                 tomorrow = get_tomorrow_date(settings.timezone)
                 if len(df_overproduction) > 0:
@@ -502,8 +575,8 @@ async def prediction_loop():
         # Sleep until next check
         if not shutdown_flag:
             if settings.prediction_mode == "daily":
-                # In daily mode, check every 60 seconds
-                sleep_seconds = 60
+                # In daily mode, check every 5 minutes
+                sleep_seconds = 300
             else:
                 # In interval mode, use configured interval
                 sleep_seconds = settings.prediction_interval_seconds

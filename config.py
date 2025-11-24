@@ -72,6 +72,22 @@ class Settings(BaseSettings):
         description="Minute window for sending notification"
     )
 
+    # AWTRIX Display Configuration
+    awtrix_enabled: bool = Field(
+        default=True,
+        description="Enable/disable AWTRIX display notifications"
+    )
+    awtrix_host: str = Field(
+        default="192.168.178.108",
+        description="AWTRIX display IP address or hostname"
+    )
+    awtrix_port: int = Field(
+        default=80,
+        ge=1,
+        le=65535,
+        description="AWTRIX display port"
+    )
+
     # Location Configuration (for weather data)
     latitude: float = Field(
         default=51.14,

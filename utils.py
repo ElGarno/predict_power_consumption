@@ -263,3 +263,175 @@ def retry_with_backoff(func, max_attempts: Optional[int] = None, *args, **kwargs
                 logger.error(f"All {attempts} attempts failed")
 
     raise last_exception
+
+
+def get_awtrix_client():
+    """
+    Get an AWTRIX client instance configured from settings.
+
+    Returns:
+        AwtrixClient: Configured AWTRIX client
+
+    Raises:
+        ImportError: If awtrix_client module is not available
+    """
+    try:
+        from awtrix_client import AwtrixClient
+        return AwtrixClient(settings.awtrix_host, settings.awtrix_port)
+    except ImportError as e:
+        logger.error(f"Failed to import AwtrixClient: {e}")
+        raise
+
+
+def send_awtrix_countdown(hours: int, minutes: int) -> bool:
+    """
+    Send countdown to next forecast to AWTRIX display.
+
+    Args:
+        hours: Hours until next forecast
+        minutes: Minutes until next forecast
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not settings.awtrix_enabled:
+        logger.debug("AWTRIX notifications disabled, skipping countdown")
+        return False
+
+    try:
+        from awtrix_client import AwtrixMessage
+
+        # Format the time remaining
+        if hours > 0:
+            time_str = f"{hours}h {minutes}m"
+        else:
+            time_str = f"{minutes}m"
+
+        target_time = f"{settings.daily_prediction_hour:02d}:{settings.daily_prediction_minute:02d}"
+        text = f"Next forecast: {target_time} ({time_str})"
+
+        message = AwtrixMessage(
+            text=text,
+            icon="27464",  # Sun emoji icon
+            color="#FFD700",  # Gold color
+            duration=10
+        )
+
+        client = get_awtrix_client()
+        success = client.send_notification(message)
+
+        if success:
+            logger.debug(f"AWTRIX countdown sent: {time_str} until forecast")
+        else:
+            logger.warning("Failed to send AWTRIX countdown")
+
+        return success
+
+    except Exception as e:
+        logger.error(f"Error sending AWTRIX countdown: {e}")
+        return False
+
+
+def send_awtrix_forecast_summary(total_energy_kwh: float, overproduction_hours: list = None) -> bool:
+    """
+    Send tomorrow's forecast summary to AWTRIX display.
+
+    Args:
+        total_energy_kwh: Total expected solar energy in kWh
+        overproduction_hours: List of hour tuples (start, end) with overproduction
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not settings.awtrix_enabled:
+        logger.debug("AWTRIX notifications disabled, skipping forecast summary")
+        return False
+
+    try:
+        from awtrix_client import AwtrixMessage
+
+        # Format the forecast message
+        text = f"Tomorrow: {total_energy_kwh:.1f} kWh expected"
+
+        message = AwtrixMessage(
+            text=text,
+            icon="27464",  # Sun emoji icon
+            color="#00FF00",  # Green color for good forecast
+            duration=15,
+            priority=1
+        )
+
+        client = get_awtrix_client()
+        success = client.send_notification(message)
+
+        if success:
+            logger.info(f"AWTRIX forecast summary sent: {total_energy_kwh:.1f} kWh")
+        else:
+            logger.warning("Failed to send AWTRIX forecast summary")
+
+        # If there are overproduction hours, send a follow-up message
+        if overproduction_hours and len(overproduction_hours) > 0:
+            # Format overproduction time windows
+            time_windows = []
+            for start, end in overproduction_hours:
+                time_windows.append(f"{start:02d}:00-{end:02d}:00")
+
+            overproduction_text = f"Overproduction: {', '.join(time_windows)}"
+
+            overproduction_message = AwtrixMessage(
+                text=overproduction_text,
+                icon="32491",  # Electric plug icon
+                color="#FF6600",  # Orange color
+                duration=15,
+                priority=1
+            )
+
+            client.send_notification(overproduction_message)
+            logger.info(f"AWTRIX overproduction alert sent: {len(overproduction_hours)} time windows")
+
+        return success
+
+    except Exception as e:
+        logger.error(f"Error sending AWTRIX forecast summary: {e}")
+        return False
+
+
+def send_awtrix_simple_status(message: str, icon: str = "27464", color: str = "#FFD700") -> bool:
+    """
+    Send a simple status message to AWTRIX display.
+
+    Args:
+        message: Status message text
+        icon: LaMetric icon code (default: sun emoji)
+        color: Hex color code (default: gold)
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not settings.awtrix_enabled:
+        logger.debug("AWTRIX notifications disabled, skipping status")
+        return False
+
+    try:
+        from awtrix_client import AwtrixMessage
+
+        status_message = AwtrixMessage(
+            text=message,
+            icon=icon,
+            color=color,
+            duration=10
+        )
+
+        client = get_awtrix_client()
+        success = client.send_notification(status_message)
+
+        if success:
+            logger.debug(f"AWTRIX status sent: {message}")
+        else:
+            logger.warning(f"Failed to send AWTRIX status: {message}")
+
+        return success
+
+    except Exception as e:
+        logger.error(f"Error sending AWTRIX status: {e}")
+        return False

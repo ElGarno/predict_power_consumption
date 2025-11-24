@@ -41,16 +41,6 @@ services:
       retries: 3
       start_period: 30s
 
-    # Resource limits (adjust for your NAS)
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-
     # Logging configuration
     logging:
       driver: "json-file"
