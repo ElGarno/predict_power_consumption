@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         description="InfluxDB server URL"
     )
     influxdb_token: str = Field(
-        ...,
+        default="",
         description="InfluxDB authentication token"
     )
     influxdb_org: str = Field(
