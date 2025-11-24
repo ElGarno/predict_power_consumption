@@ -12,25 +12,43 @@ This module handles:
 For NAS deployment, this runs as a long-lived process with configurable intervals.
 """
 
+import sys
+print("DEBUG: Starting imports...", file=sys.stderr, flush=True)
+
 import pandas as pd
+print("DEBUG: pandas imported", file=sys.stderr, flush=True)
 import numpy as np
+print("DEBUG: numpy imported", file=sys.stderr, flush=True)
 import asyncio
 import signal
 import requests
+print("DEBUG: stdlib imports done", file=sys.stderr, flush=True)
+
 from sklearn.model_selection import TimeSeriesSplit
+print("DEBUG: TimeSeriesSplit imported", file=sys.stderr, flush=True)
 from sklearn.ensemble import RandomForestRegressor
+print("DEBUG: RandomForestRegressor imported", file=sys.stderr, flush=True)
 from sklearn.metrics import root_mean_squared_error
+print("DEBUG: sklearn metrics imported", file=sys.stderr, flush=True)
+
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for NAS
 import matplotlib.pyplot as plt
+print("DEBUG: matplotlib imported", file=sys.stderr, flush=True)
+
 import joblib
 from datetime import datetime, timedelta
 from typing import Optional
 from pathlib import Path
 import pytz
+print("DEBUG: remaining stdlib imports done", file=sys.stderr, flush=True)
 
 from prepare_data import get_merged_data_for_training, export_merged_data
+print("DEBUG: prepare_data imported", file=sys.stderr, flush=True)
+
 from config import settings, logger
+print("DEBUG: config imported", file=sys.stderr, flush=True)
+
 from utils import (
     send_pushover_notification,
     read_parquet,
@@ -41,6 +59,7 @@ from utils import (
     send_awtrix_countdown,
     send_awtrix_forecast_summary
 )
+print("DEBUG: utils imported", file=sys.stderr, flush=True)
 
 # Debug: Log that imports completed successfully
 logger.info("All imports completed successfully")

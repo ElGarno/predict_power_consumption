@@ -38,4 +38,7 @@ env/
 
 # OS
 .DS_Store
-Thumbs.db.mcp.json
+Thumbs.db
+
+# MCP
+.mcp.json
