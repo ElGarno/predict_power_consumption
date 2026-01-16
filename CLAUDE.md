@@ -37,7 +37,6 @@ docker-compose up -d
 
 # View logs
 docker-compose logs -f solar-prediction
-
 # Stop service
 docker-compose down
 

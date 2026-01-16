@@ -56,7 +56,6 @@ from utils import (
     validate_required_columns,
     get_tomorrow_date,
     retry_with_backoff,
-    send_awtrix_countdown,
     send_awtrix_forecast_summary
 )
 print("DEBUG: utils imported", file=sys.stderr, flush=True)
@@ -399,6 +398,8 @@ async def prediction_loop():
     # Track last execution times to avoid duplicate runs
     last_prediction_date = None
     last_retrain_date = None
+    # Store last prediction for hourly AWTRIX updates
+    last_total_energy_kwh = None
 
     # Load model once at startup if it exists
     model = None
@@ -430,26 +431,9 @@ async def prediction_loop():
                 next_prediction = f"{settings.daily_prediction_hour:02d}:{settings.daily_prediction_minute:02d}"
                 logger.info(f"Service running. Next prediction at {next_prediction} (currently {now.strftime('%H:%M')})")
 
-            # Send AWTRIX countdown every 5 minutes in daily mode
-            if settings.prediction_mode == "daily":
-                # Calculate time until next prediction
-                target_time = now.replace(
-                    hour=settings.daily_prediction_hour,
-                    minute=settings.daily_prediction_minute,
-                    second=0,
-                    microsecond=0
-                )
-
-                # If target time is in the past, move to tomorrow
-                if target_time <= now:
-                    target_time += timedelta(days=1)
-
-                time_diff = target_time - now
-                hours_until = int(time_diff.total_seconds() // 3600)
-                minutes_until = int((time_diff.total_seconds() % 3600) // 60)
-
-                # Send countdown to AWTRIX
-                send_awtrix_countdown(hours_until, minutes_until)
+            # Send AWTRIX forecast summary every hour at xx:03
+            if settings.prediction_mode == "daily" and now.minute == 3 and last_total_energy_kwh is not None:
+                send_awtrix_forecast_summary(last_total_energy_kwh)
 
             # Check if it's time for weekly model retraining
             should_retrain = (
@@ -530,6 +514,7 @@ async def prediction_loop():
 
                 # Calculate total energy and overproduction windows for AWTRIX
                 total_energy_kwh = forecast_data["predicted"].sum() / 1000
+                last_total_energy_kwh = total_energy_kwh  # Store for hourly AWTRIX updates
 
                 # Extract overproduction time windows (consecutive hours)
                 overproduction_windows = []

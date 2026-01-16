@@ -283,55 +283,6 @@ def get_awtrix_client():
         raise
 
 
-def send_awtrix_countdown(hours: int, minutes: int) -> bool:
-    """
-    Send countdown to next forecast to AWTRIX display.
-
-    Args:
-        hours: Hours until next forecast
-        minutes: Minutes until next forecast
-
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    if not settings.awtrix_enabled:
-        logger.debug("AWTRIX notifications disabled, skipping countdown")
-        return False
-
-    try:
-        from awtrix_client import AwtrixMessage
-
-        # Format the time remaining
-        if hours > 0:
-            time_str = f"{hours}h {minutes}m"
-        else:
-            time_str = f"{minutes}m"
-
-        target_time = f"{settings.daily_prediction_hour:02d}:{settings.daily_prediction_minute:02d}"
-        text = f"Next forecast: {target_time} ({time_str})"
-
-        message = AwtrixMessage(
-            text=text,
-            icon="27464",  # Sun emoji icon
-            color="#FFD700",  # Gold color
-            duration=10
-        )
-
-        client = get_awtrix_client()
-        success = client.send_notification(message)
-
-        if success:
-            logger.debug(f"AWTRIX countdown sent: {time_str} until forecast")
-        else:
-            logger.warning("Failed to send AWTRIX countdown")
-
-        return success
-
-    except Exception as e:
-        logger.error(f"Error sending AWTRIX countdown: {e}")
-        return False
-
-
 def send_awtrix_forecast_summary(total_energy_kwh: float, overproduction_hours: list = None) -> bool:
     """
     Send tomorrow's forecast summary to AWTRIX display.
