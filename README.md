@@ -437,26 +437,26 @@ export NOTIFICATION_HOUR=21
 
 ```
 predict_power_consumption/
-   config.py                  # Configuration management
-   utils.py                   # Shared utilities
-   get_power_consumption_data.py      # InfluxDB data fetcher
-   get_weather_data_adorn_hourly_api.py   # DWD weather fetcher
-   prepare_data.py            # Data preprocessing
-   train_ml_regression_model.py   # Main prediction service
-   Dockerfile                 # Docker build instructions
-   docker-compose.yml         # Docker deployment config
-   pyproject.toml            # Python dependencies
-   uv.lock                   # Locked dependencies (uv)
-   .env.example              # Environment template
-   .gitignore                # Git exclusions
-   CLAUDE.md                 # Developer guide
-   README.md                 # This file
-   data/                     # Persistent data directory
-       power_consumption_export.parquet
-       attendorn_hourly_weather_data_api.parquet
-       merged_data_weather_power.parquet
-       model_weather_solar_power.pkl
-       prediction_overproduction.png
+├── config.py                              # Configuration management
+├── utils.py                               # Shared utilities
+├── get_power_consumption_data.py          # InfluxDB data fetcher
+├── get_weather_data_adorn_hourly_api.py   # DWD weather fetcher
+├── prepare_data.py                        # Data preprocessing
+├── train_ml_regression_model.py           # Main prediction service
+├── Dockerfile                             # Docker build instructions
+├── docker-compose.yml                     # Docker deployment config
+├── pyproject.toml                         # Python dependencies
+├── uv.lock                                # Locked dependencies (uv)
+├── .env.example                           # Environment template
+├── .gitignore                             # Git exclusions
+├── CLAUDE.md                              # Developer guide
+├── README.md                              # This file
+└── data/                                  # Persistent data directory
+    ├── power_consumption_export.parquet
+    ├── attendorn_hourly_weather_data_api.parquet
+    ├── merged_data_weather_power.parquet
+    ├── model_weather_solar_power.pkl
+    └── prediction_overproduction.png
 ```
 
 ## Development Workflow
