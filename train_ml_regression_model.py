@@ -431,17 +431,20 @@ async def prediction_loop():
                 next_prediction = f"{settings.daily_prediction_hour:02d}:{settings.daily_prediction_minute:02d}"
                 logger.info(f"Service running. Next prediction at {next_prediction} (currently {now.strftime('%H:%M')})")
 
-            # Send AWTRIX forecast summary every hour at xx:03
-            if settings.prediction_mode == "daily" and now.minute == 3 and last_total_energy_kwh is not None:
+            # Send AWTRIX forecast summary every hour (within first 10 minutes)
+            if settings.prediction_mode == "daily" and now.minute >= 3 and now.minute < 8 and last_total_energy_kwh is not None:
                 send_awtrix_forecast_summary(last_total_energy_kwh)
 
             # Check if it's time for weekly model retraining
+            # Use a window approach to avoid missing the exact minute
+            retrain_minute = settings.model_retrain_minute
             should_retrain = (
                 settings.model_retrain_enabled and
                 model is not None and  # Only retrain if we have a model
                 current_day == settings.model_retrain_day and
                 now.hour == settings.model_retrain_hour and
-                now.minute == settings.model_retrain_minute and
+                now.minute >= retrain_minute and
+                now.minute < retrain_minute + 10 and  # 10-minute window
                 last_retrain_date != current_date
             )
 
@@ -475,9 +478,13 @@ async def prediction_loop():
 
             # Check if it's time for prediction
             if settings.prediction_mode == "daily":
+                # Use a window approach: predict if we're at or past the scheduled time
+                # and haven't predicted today yet. This avoids missing the exact minute.
+                scheduled_minute = settings.daily_prediction_minute
                 should_predict = (
                     now.hour == settings.daily_prediction_hour and
-                    now.minute == settings.daily_prediction_minute and
+                    now.minute >= scheduled_minute and
+                    now.minute < scheduled_minute + 10 and  # 10-minute window
                     last_prediction_date != current_date
                 )
             else:
